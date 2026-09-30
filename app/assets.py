@@ -90,7 +90,7 @@ def validate_catalog(data):
 
 def ensure_component(local_path='', allow_download=False, progress=lambda message: None):
     cached = app_paths.COMPONENT_DIR / ('alice-' + profile.ALICE_VERSION + '.exe')
-    candidates = [Path(local_path)] if local_path else [cached]
+    candidates = ([Path(local_path)] if local_path else []) + [cached]
     for candidate in candidates:
         if candidate.is_file():
             if _sha(candidate.read_bytes()) != profile.ALICE_SHA256:

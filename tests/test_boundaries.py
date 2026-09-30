@@ -13,6 +13,33 @@ from unittest.mock import patch
 
 
 class BoundaryTests(unittest.TestCase):
+    def test_legacy_migration_keeps_new_cache_and_updates_cached_tool_path(self):
+        import json
+        with tempfile.TemporaryDirectory(prefix='rance-migrate-') as folder:
+            old, new = Path(folder) / 'old', Path(folder) / 'new'
+            (old / 'cache').mkdir(parents=True)
+            (new / 'cache').mkdir(parents=True)
+            (old / 'components').mkdir()
+            (old / 'cache/catalog.json').write_text('old')
+            (new / 'cache/catalog.json').write_text('new')
+            (old / 'components/alice-0.13.0.exe').write_bytes(b'component')
+            (old / 'settings.json').write_text(json.dumps(dict(alice_path=str(old / 'components/alice-0.13.0.exe'))))
+            with patch.multiple(app_paths, LEGACY_DATA_DIR=old, DATA_DIR=new, CONFIG_FILE=new / 'settings.json',
+                                COMPONENT_DIR=new / 'components', LOG_FILE=new / 'operations.jsonl'):
+                app_paths.migrate_legacy()
+                self.assertEqual((new / 'cache/catalog.json').read_text(), 'new')
+                self.assertEqual(json.loads(app_paths.CONFIG_FILE.read_text())['alice_path'], str(new / 'components/alice-0.13.0.exe'))
+                before = app_paths.CONFIG_FILE.read_bytes()
+                app_paths.migrate_legacy()
+                self.assertEqual(app_paths.CONFIG_FILE.read_bytes(), before)
+
+    def test_missing_manual_component_uses_verified_cached_component(self):
+        with tempfile.TemporaryDirectory(prefix='rance-test-') as folder:
+            cached = Path(folder) / 'alice-0.13.0.exe'
+            cached.write_bytes(b'fixture')
+            with patch.object(app_paths, 'COMPONENT_DIR', Path(folder)), patch.object(assets, '_sha', return_value=assets.profile.ALICE_SHA256):
+                self.assertEqual(assets.ensure_component(str(Path(folder) / 'no-longer-exists.exe')), cached)
+
     def test_table_parser_handles_quotes_and_newlines(self):
         text = 'table 例 = {\n { string Id, int 数值, string 说明 },\n { "a,b\\\"c", 7, "首行\\r次行" },\n};'
         self.assertEqual(assets.parse_table(text, '例'), [dict(Id='a,b"c', 数值=7, 说明='首行\r次行')])

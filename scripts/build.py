@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 import zipfile
+import argparse
 from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -80,14 +81,20 @@ def icon_and_version():
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--dist-dir', default='dist')
+    options = parser.parse_args()
+    dist_dir = (ROOT / options.dist_dir).resolve()
+    if ROOT.resolve() not in dist_dir.parents:
+        raise RuntimeError('The build directory must be inside the project.')
     if sys.platform != 'win32' or sys.maxsize <= 2**32:
         raise RuntimeError('Build with Windows x64 Python.')
     native()
     licenses()
     icon_and_version()
-    subprocess.run([sys.executable, '-m', 'PyInstaller', '--noconfirm', '--clean',
+    subprocess.run([sys.executable, '-m', 'PyInstaller', '--noconfirm', '--clean', '--distpath', str(dist_dir),
                     str(ROOT / 'modifier.spec')], cwd=ROOT, check=True)
-    package = ROOT / 'dist/Rance10Modifier'
+    package = dist_dir / 'Rance10Modifier'
     for name in ['README.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'CHANGELOG.md']:
         shutil.copy2(ROOT / name, package / name)
     release = ROOT / 'release'

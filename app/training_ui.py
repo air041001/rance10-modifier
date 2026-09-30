@@ -4,7 +4,7 @@ from tkinter import ttk, messagebox
 import app_paths
 import engine
 import training
-from ui_theme import FONT, GREEN, MUTED, surface, ScrollBody
+from ui_theme import FONT, GREEN, MUTED, surface, ScrollBody, LibraryGate
 
 
 class Training(ttk.Frame):
@@ -13,7 +13,9 @@ class Training(ttk.Frame):
         self.owner = owner
         self.context, self.saves, self.rows = None, [], []
         self.active, self.photo, self.loaded = None, None, False
-        top = surface(self, 12)
+        self.content = ttk.Frame(self)
+        self.content.pack(fill="both", expand=True)
+        top = surface(self.content, 12)
         top.pack(fill='x')
         ttk.Label(top, text='目标存档', style='Surface.TLabel').pack(side='left', padx=(0, 12))
         self.savebox = ttk.Combobox(top, state='readonly', font=(FONT, 10))
@@ -21,10 +23,10 @@ class Training(ttk.Frame):
         self.savebox.bind('<<ComboboxSelected>>', lambda e: self.load_selected())
         self.refresh_button = ttk.Button(top, text='刷新存档', command=self.refresh)
         self.refresh_button.pack(side='left', padx=(10, 0))
-        ttk.Label(self, text='选择已保存的进度。培养修改会备份原档，重新读档后生效。',
+        ttk.Label(self.content, text='选择已保存的进度。培养修改会备份原档，重新读档后生效。',
                   style='Hint.TLabel').pack(anchor='w', pady=(9, 12))
 
-        center = ttk.Panedwindow(self, orient='horizontal')
+        center = ttk.Panedwindow(self.content, orient='horizontal')
         center.pack(fill='both', expand=True)
         left = ttk.Frame(center, width=310)
         center.add(left, weight=1)
@@ -98,9 +100,11 @@ class Training(ttk.Frame):
         ttk.Label(detail, text='这里读取存档进度；条件是否满足仍由游戏判断。指定候选尚未开放。',
                   style='SurfaceHint.TLabel', wraplength=530).pack(anchor='w')
         self.detail_scroll.bind_children()
+        self.gate = LibraryGate(self, self.content, owner, self.refresh)
         self.update_actions()
 
     def invalidate(self):
+        self.gate.ready()
         self.context, self.saves, self.rows = None, [], []
         self.active, self.photo, self.loaded = None, None, False
         self.savebox['values'] = []
@@ -115,14 +119,21 @@ class Training(ttk.Frame):
         self.update_actions()
 
     def refresh(self):
+        self.context = None
+        self.loaded = True
         if not app_paths.CATALOG_FILE.exists() or not app_paths.CHARACTER_FILE.exists():
-            self.owner.tabs.select(self.owner.setup)
-            self.owner.status.configure(text='请先准备图鉴，已有图鉴可点击“更新人物资料”。')
+            missing = '人物资料' if app_paths.CATALOG_FILE.exists() else '卡牌图鉴和人物资料'
+            self.gate.show('当前缺少' + missing + '。点击“前往准备图鉴”；已有图鉴可只点击“更新人物资料”。')
             return
+        self.gate.ready()
         def work():
             engine.check_version()
             return engine.list_saves()
-        self.owner.run(work, self.saves_loaded, '正在读取培养存档列表…')
+        self.owner.run(work, self.saves_loaded, '正在读取培养存档列表…', self.load_failed)
+
+    def load_failed(self, message):
+        self.context = None
+        self.gate.show('读取人物培养未完成：' + message)
 
     def saves_loaded(self, saves):
         old = self.context['path'] if self.context else None
@@ -146,7 +157,7 @@ class Training(ttk.Frame):
         path = self.saves[index]['path']
         self.context = None
         self.update_actions()
-        self.owner.run(lambda: training.inspect(path), self.context_loaded, '正在读取人物培养与餐券进度…')
+        self.owner.run(lambda: training.inspect(path), self.context_loaded, '正在读取人物培养与餐券进度…', self.load_failed)
 
     def context_loaded(self, context):
         self.context = context
@@ -239,6 +250,8 @@ class Training(ttk.Frame):
         return next((r for r in self.rows if r['id'] == self.variant.get()), None)
 
     def update_actions(self):
+        if hasattr(self, 'gate'):
+            self.gate.update_actions()
         busy, context = self.owner.busy, self.context
         self.refresh_button.configure(state='disabled' if busy else 'normal')
         self.savebox.configure(state='disabled' if busy else 'readonly')

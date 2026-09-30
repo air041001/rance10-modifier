@@ -133,16 +133,49 @@ class PageDeck(ttk.Frame):
         return key
 
 
+class LibraryGate(tk.Frame):
+    """Explain prerequisites without moving away from the chosen feature."""
+    def __init__(self, master, content, owner, retry):
+        super().__init__(master, bg=BG)
+        self.content, self.owner = content, owner
+        panel = surface(self, 24)
+        panel.pack(fill='x', pady=(12, 0))
+        ttk.Label(panel, text='准备本机图鉴后即可使用', style='CardTitle.TLabel').pack(anchor='w')
+        self.message = ttk.Label(panel, style='SurfaceHint.TLabel', wraplength=650, justify='left')
+        self.message.pack(fill='x', pady=(12, 16))
+        actions = ttk.Frame(panel, style='Surface.TFrame')
+        actions.pack(fill='x')
+        self.prepare_button = ttk.Button(actions, text='前往准备图鉴', style='Primary.TButton',
+                                         command=lambda: owner.tabs.select(owner.setup))
+        self.prepare_button.pack(side='left')
+        self.retry_button = ttk.Button(actions, text='重新检查', command=retry)
+        self.retry_button.pack(side='left', padx=(10, 0))
+        self.bind('<Configure>', lambda e: self.message.configure(wraplength=max(280, e.width - 60)))
+
+    def show(self, message):
+        self.message.configure(text=message)
+        self.content.pack_forget()
+        self.pack(fill='both', expand=True)
+
+    def ready(self):
+        self.pack_forget()
+        self.content.pack(fill='both', expand=True)
+
+    def update_actions(self):
+        for button in [self.prepare_button, self.retry_button]:
+            button.configure(state='disabled' if self.owner.busy else 'normal')
+
+
 class ScrollBody(tk.Frame):
     """A card detail column can scroll as one piece at smaller window sizes."""
-    def __init__(self, master):
-        super().__init__(master, bg=SURFACE, borderwidth=0)
-        self.canvas = tk.Canvas(self, bg=SURFACE, highlightthickness=0, borderwidth=0, yscrollincrement=24)
+    def __init__(self, master, background=SURFACE):
+        super().__init__(master, bg=background, borderwidth=0)
+        self.canvas = tk.Canvas(self, bg=background, highlightthickness=0, borderwidth=0, yscrollincrement=24)
         scrollbar = ttk.Scrollbar(self, orient='vertical', command=self.canvas.yview)
         self.canvas.configure(yscrollcommand=scrollbar.set)
         scrollbar.pack(side='right', fill='y')
         self.canvas.pack(side='left', fill='both', expand=True)
-        self.body = tk.Frame(self.canvas, bg=SURFACE)
+        self.body = tk.Frame(self.canvas, bg=background)
         self.window = self.canvas.create_window((0, 0), window=self.body, anchor='nw')
         self.body.bind('<Configure>', lambda e: self.canvas.configure(scrollregion=self.canvas.bbox('all')))
         self.canvas.bind('<Configure>', lambda e: self.canvas.itemconfigure(self.window, width=e.width))
@@ -152,9 +185,23 @@ class ScrollBody(tk.Frame):
         self.canvas.yview_scroll(-int(event.delta / 120) * 3, 'units')
         return 'break'
 
-    def bind_children(self):
+    def see(self, widget):
+        self.update_idletasks()
+        top = widget.winfo_rooty() - self.body.winfo_rooty()
+        bottom = top + widget.winfo_height()
+        visible = self.canvas.canvasy(0)
+        height = self.canvas.winfo_height()
+        total = max(1, self.body.winfo_height())
+        if top < visible:
+            self.canvas.yview_moveto(max(0, top - 12) / total)
+        elif bottom > visible + height:
+            self.canvas.yview_moveto(max(0, bottom - height + 12) / total)
+
+    def bind_children(self, follow_focus=False):
         def bind(widget):
             widget.bind('<MouseWheel>', self.wheel)
+            if follow_focus:
+                widget.bind('<FocusIn>', lambda e: self.see(e.widget), add='+')
             for child in widget.winfo_children():
                 bind(child)
         bind(self.body)

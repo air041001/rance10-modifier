@@ -7,20 +7,23 @@ import assets
 import engine
 import runtime
 import settings
-from ui_theme import FONT, GREEN, RED, surface
+from ui_theme import FONT, GREEN, RED, BG, surface, ScrollBody
 
 
 class Setup(ttk.Frame):
     def __init__(self, master, owner):
         super().__init__(master, padding=(24, 20))
         self.owner = owner
+        self.scroll = ScrollBody(self, background=BG)
+        self.scroll.pack(fill="both", expand=True)
+        content = self.scroll.body
         config = settings.load()
         self.game = tk.StringVar(value=config.get('game_dir', ''))
         self.saves = tk.StringVar(value=str(settings.save_dir()))
         self.component = tk.StringVar(value=config.get('alice_path', ''))
-        ttk.Label(self, text='首次使用先选择游戏目录。餐券与点数可直接连接游戏，卡牌图鉴需要准备一次。',
+        ttk.Label(content, text='首次使用先选择游戏目录。餐券与点数可直接连接游戏，卡牌图鉴需要准备一次。',
                   style='Hint.TLabel', wraplength=880).pack(anchor='w', pady=(0, 16))
-        paths = surface(self, 18)
+        paths = surface(content, 18)
         paths.pack(fill='x')
         ttk.Label(paths, text='游戏与存档', style='CardTitle.TLabel').pack(anchor='w', pady=(0, 10))
         self.controls = []
@@ -47,7 +50,7 @@ class Setup(ttk.Frame):
                                   style='SurfaceHint.TLabel', wraplength=850)
         self.feedback.pack(anchor='w', fill='x', pady=(12, 0))
 
-        library = surface(self, 18)
+        library = surface(content, 18)
         library.pack(fill='x', pady=(16, 0))
         ttk.Label(library, text='卡牌图鉴', style='CardTitle.TLabel').pack(anchor='w', pady=(0, 8))
         ttk.Label(library, text='卡牌数据和图片从你的本机游戏生成，缓存会保留到下次使用。',
@@ -65,20 +68,40 @@ class Setup(ttk.Frame):
         row = ttk.Frame(library, style='Surface.TFrame')
         row.pack(fill='x', pady=(12, 0))
         self.local_button = ttk.Button(row, text='使用本地组件准备', command=lambda: self.prepare(False))
-        self.local_button.pack(side='left')
         self.download_button = ttk.Button(row, text='从官方源下载并准备', command=lambda: self.prepare(True))
-        self.download_button.pack(side='left', padx=10)
         self.controls += [self.local_button, self.download_button]
         self.character_button = ttk.Button(row, text='更新人物资料', command=self.prepare_characters)
-        self.character_button.pack(side='left')
         self.controls.append(self.character_button)
+        self.action_row = row
+        self.action_row.bind("<Configure>", self.layout_actions)
+        self.layout_actions()
         self.library_status = ttk.Label(library, text=self.library_text(), style='SurfaceHint.TLabel', wraplength=850)
         self.library_status.pack(anchor='w', fill='x', pady=(12, 0))
-        ttk.Button(self, text='打开配置与缓存目录', command=lambda: os.startfile(str(app_paths.DATA_DIR))).pack(anchor='w', pady=(16, 0))
+        self.data_button = ttk.Button(content, text='打开配置与缓存目录', command=lambda: os.startfile(str(app_paths.DATA_DIR)))
+        self.data_button.pack(anchor='w', pady=(16, 0))
+        self.scroll.bind_children(follow_focus=True)
+        self.scroll.body.bind("<Configure>", self.wrap_labels, add="+")
         self.update_actions()
 
     def library_text(self):
         return '本机图鉴已准备，可前往“卡牌扩充”。' if app_paths.CATALOG_FILE.exists() else '尚未准备图鉴。下载方式首次需要联网，组件只从原项目官方 GitHub 获取。'
+
+    def layout_actions(self, event=None):
+        buttons = [self.local_button, self.download_button, self.character_button]
+        width = event.width if event else max(1, self.action_row.winfo_width())
+        sizes = [button.winfo_reqwidth() + 12 for button in buttons]
+        columns = 3 if sum(sizes) <= width else (2 if sum(sizes[:2]) <= width else 1)
+        for i, button in enumerate(buttons):
+            button.grid(row=i // columns, column=i % columns, sticky='w', padx=(0, 12), pady=(0, 8))
+
+    def wrap_labels(self, event):
+        width = max(280, event.width - 80)
+        def visit(widget):
+            if widget.winfo_class() == 'TLabel' and int(float(widget.cget('wraplength') or 0)):
+                widget.configure(wraplength=width)
+            for child in widget.winfo_children():
+                visit(child)
+        visit(self.scroll.body)
 
     def browse_game(self):
         path = filedialog.askdirectory(parent=self, title='选择游戏程序所在文件夹')

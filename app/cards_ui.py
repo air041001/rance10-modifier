@@ -6,7 +6,7 @@ import unicodedata
 import engine
 import app_paths
 from gallery import Gallery
-from ui_theme import BG, SURFACE, TEXT, MUTED, LINE, BLUE, TINT, GOLD, FONT, surface, ScrollBody
+from ui_theme import BG, SURFACE, TEXT, MUTED, LINE, BLUE, TINT, GOLD, FONT, surface, ScrollBody, LibraryGate
 
 
 class Cards(ttk.Frame):
@@ -15,8 +15,10 @@ class Cards(ttk.Frame):
         self.owner = owner
         self.context, self.saves, self.selected, self.visible = None, [], set(), []
         self.active, self.preview_photo, self.loaded = None, None, False
+        self.content = ttk.Frame(self)
+        self.content.pack(fill="both", expand=True)
 
-        row = surface(self, 12)
+        row = surface(self.content, 12)
         row.pack(fill='x')
         ttk.Label(row, text='目标存档', style='Surface.TLabel').pack(side='left', padx=(0, 12))
         self.savebox = ttk.Combobox(row, state='readonly', font=(FONT, 10))
@@ -24,11 +26,11 @@ class Cards(ttk.Frame):
         self.savebox.bind('<<ComboboxSelected>>', lambda e: self.load_selected())
         self.refresh_button = ttk.Button(row, text='刷新存档', command=self.refresh)
         self.refresh_button.pack(side='left', padx=(10, 0))
-        self.hint = ttk.Label(self, text='先保存到手动存档位，添加卡牌后重新读档生效。',
+        self.hint = ttk.Label(self.content, text='先保存到手动存档位，添加卡牌后重新读档生效。',
                               style='Hint.TLabel', wraplength=990)
         self.hint.pack(fill='x', pady=(9, 12))
 
-        row = ttk.Frame(self)
+        row = ttk.Frame(self.content)
         row.pack(fill='x', pady=(0, 12))
         self.count_text = tk.StringVar(value='选择存档，查看持有卡牌')
         ttk.Label(row, textvariable=self.count_text, style='Summary.TLabel').pack(side='left')
@@ -40,7 +42,7 @@ class Cards(ttk.Frame):
         self.goal_spin.pack(side='left')
         self.goal_value.trace_add('write', lambda *a: self.update_actions())
 
-        filters = ttk.Frame(self)
+        filters = ttk.Frame(self.content)
         filters.pack(fill='x', pady=(0, 6))
         filters.columnconfigure(0, weight=1)
         self.query = tk.StringVar()
@@ -62,7 +64,7 @@ class Cards(ttk.Frame):
                        textvariable=self.version, state='readonly', width=9, font=(FONT, 10))
         self.versionbox.grid(row=0, column=3)
         self.versionbox.bind('<<ComboboxSelected>>', lambda e: self.filter())
-        checks = ttk.Frame(self)
+        checks = ttk.Frame(self.content)
         checks.pack(fill='x', pady=(0, 10))
         ttk.Label(checks, text='卡名 / 技能', style='Hint.TLabel').pack(side='left', padx=(0, 18))
         self.only_missing = tk.BooleanVar(value=False)
@@ -75,7 +77,7 @@ class Cards(ttk.Frame):
         modebox.pack(side='right')
         modebox.bind('<<ComboboxSelected>>', lambda e: self.switch_view())
 
-        actions = ttk.Frame(self)
+        actions = ttk.Frame(self.content)
         actions.pack(side='bottom', fill='x', pady=(12, 0))
         buttons = ttk.Frame(actions)
         buttons.pack(fill='x')
@@ -88,7 +90,7 @@ class Cards(ttk.Frame):
         self.result_text = ttk.Label(actions, text='点击卡图查看技能；点击方框或双击卡图勾选。', style='Hint.TLabel')
         self.result_text.pack(anchor='w', pady=(8, 0))
 
-        center = ttk.Panedwindow(self, orient='horizontal')
+        center = ttk.Panedwindow(self.content, orient='horizontal')
         center.pack(fill='both', expand=True)
         self.left = ttk.Frame(center)
         center.add(self.left, weight=1)
@@ -133,19 +135,27 @@ class Cards(ttk.Frame):
         self.details.pack(fill='x', pady=(14, 0))
         self.detail_scroll.bind_children()
         self.bind('<Configure>', lambda e: self.hint.configure(wraplength=max(400, e.width - 48)))
+        self.gate = LibraryGate(self, self.content, owner, self.refresh)
         self.update_actions()
 
     def refresh(self):
+        self.context = None
+        self.loaded = True
         if not app_paths.CATALOG_FILE.exists():
-            self.owner.status.configure(text='请在“设置与图鉴”中先准备卡牌图鉴。')
-            self.owner.tabs.select(self.owner.setup)
+            self.gate.show('当前还没有可用的本机卡牌图鉴。点击“前往准备图鉴”，完成后再点“重新检查”。')
             return
+        self.gate.ready()
         def work():
             engine.check_version()
             return engine.list_saves()
-        self.owner.run(work, self.saves_loaded, '正在读取存档列表…')
+        self.owner.run(work, self.saves_loaded, '正在读取存档列表…', self.load_failed)
+
+    def load_failed(self, message):
+        self.context = None
+        self.gate.show('读取卡牌未完成：' + message)
 
     def invalidate(self):
+        self.gate.ready()
         self.context, self.saves, self.selected, self.visible = None, [], set(), []
         self.active, self.loaded, self.preview_photo = None, False, None
         self.savebox['values'] = []
@@ -181,7 +191,7 @@ class Cards(ttk.Frame):
             return
         self.context = None
         self.selected.clear()
-        self.owner.run(lambda: engine.inspect(self.saves[idx]['path']), self.context_loaded, '正在读取目标存档的卡牌…')
+        self.owner.run(lambda: engine.inspect(self.saves[idx]['path']), self.context_loaded, '正在读取目标存档的卡牌…', self.load_failed)
 
     def context_loaded(self, context):
         self.context, self.selected, self.active = context, set(), None
@@ -345,6 +355,8 @@ class Cards(ttk.Frame):
         self.filter()
 
     def update_actions(self):
+        if hasattr(self, 'gate'):
+            self.gate.update_actions()
         if not hasattr(self, 'apply_button'):
             return
         c, busy = self.context, self.owner.busy

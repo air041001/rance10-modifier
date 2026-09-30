@@ -2,6 +2,9 @@
 import argparse
 import json
 import sys
+import time
+import tempfile
+from unittest.mock import patch
 from pathlib import Path
 from tkinter import font
 import app_paths
@@ -27,13 +30,32 @@ def run():
         app.tabs.select(page)
         app.update()
         geometry.append([[row[0].winfo_width(), row[0].winfo_height()] for row in app.tabs.items.values()])
+    app.tabs.select(app.setup)
+    app.update()
+    setup_controls = []
+    for button in [app.setup.local_button, app.setup.download_button, app.setup.character_button, app.setup.data_button]:
+        app.setup.scroll.see(button)
+        app.update()
+        canvas = app.setup.scroll.canvas
+        top = button.winfo_rooty() - canvas.winfo_rooty()
+        assert button.winfo_height() > 20 and 0 <= top and top + button.winfo_height() <= canvas.winfo_height()
+        assert button.winfo_width() >= button.winfo_reqwidth()
+        setup_controls.append(button.cget('text'))
+    with tempfile.TemporaryDirectory(prefix='missing-library-') as folder:
+        with patch.object(app_paths, 'CATALOG_FILE', Path(folder) / 'absent.json'):
+            for page in [app.cards, app.training]:
+                page.loaded = False
+                app.tabs.items[str(page)][4].event_generate('<Button-1>')
+                app.update()
+                assert app.tabs.select() == str(page), 'Missing data changed the selected page'
+                assert page.gate.winfo_ismapped() and not page.content.winfo_ismapped()
     state = dict(version=VERSION, frozen=bool(getattr(sys, 'frozen', False)),
                  resources=str(app_paths.RESOURCE_DIR), data=str(app_paths.DATA_DIR),
                  helper=(app_paths.RESOURCE_DIR / 'LiveValues.exe').is_file(),
                  instructions=(app_paths.RESOURCE_DIR / '使用说明.txt').is_file(),
                  navigation=geometry,
+                 missing_library_stays_on_page=True, setup_controls_visible=setup_controls,
                  value_font=font.Font(app, font=app.theme.lookup('Value.TLabel', 'font')).actual(),
-                 setup_bottom=app.setup.download_button.winfo_rooty() + app.setup.download_button.winfo_height(),
                  window_bottom=app.winfo_rooty() + app.winfo_height())
     import runtime
     import settings
@@ -48,9 +70,22 @@ def run():
             import engine
             saves = [s for s in engine.list_saves() if s['manual'] and not s.get('error')]
             if saves:
-                app.cards.loaded = True
-                context = engine.inspect(saves[0]['path'])
-                app.cards.context_loaded(context)
+                navigation = []
+                for page in [app.cards, app.training]:
+                    if page == app.training and not app_paths.CHARACTER_FILE.exists():
+                        continue
+                    page.invalidate()
+                    app.tabs.items[str(page)][4].event_generate('<Button-1>')
+                    deadline = time.monotonic() + 30
+                    while app.busy or page.context is None:
+                        app.update()
+                        assert time.monotonic() < deadline, 'Normal navigation did not load the feature'
+                        time.sleep(.02)
+                    assert app.tabs.select() == str(page)
+                    assert not page.gate.winfo_ismapped()
+                    navigation.append(type(page).__name__)
+                state['normal_navigation'] = navigation
+                context = app.cards.context
                 app.tabs.select(app.cards)
                 app.update()
                 state['cards'] = dict(displayed=len(app.cards.visible), image_loaded=bool(app.cards.preview_photo))
@@ -83,6 +118,5 @@ def run():
                     assert app.training.star_button.instate(['disabled'])
     assert state['helper'] and state['instructions']
     assert all(sizes == geometry[0] for sizes in geometry)
-    assert state['setup_bottom'] < state['window_bottom']
     Path(options.output).write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding='utf-8')
     app.destroy()
