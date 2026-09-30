@@ -21,5 +21,6 @@ settings.json
 operations.jsonl
 last-error.txt
 catalog.json
+character-info.json
 manifest.json
 test-report*.json

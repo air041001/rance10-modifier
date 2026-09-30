@@ -16,6 +16,7 @@ from setup_ui import Setup
 from gallery import Images
 from numbers_ui import Numbers
 from cards_ui import Cards
+from training_ui import Training
 from ui_theme import BG, SURFACE, TEXT, MUTED, LINE, NAV, FONT, GREEN, RED, PageDeck, configure_styles
 
 
@@ -23,7 +24,7 @@ class App(tk.Tk):
     def __init__(self, auto_connect=True):
         app_paths.initialize()
         super().__init__()
-        self.title('兰斯10修改器 · v' + VERSION)
+        self.title('兰斯10修改器 · v' + VERSION + ' 预览版')
         self.geometry('1300x880')
         self.minsize(1120, 800)
         self.configure(bg=BG)
@@ -52,7 +53,7 @@ class App(tk.Tk):
         tk.Frame(info, bg='#35445a', height=1).pack(fill='x', pady=(0, 18))
         tk.Label(info, text='即时数值  ·  按需修改\n卡牌扩充  ·  读档生效', font=(FONT, 9),
                  bg=NAV, fg='#9aacc3', justify='left', anchor='w').pack(fill='x')
-        tk.Label(info, text='本地工具  /  v' + VERSION, font=(FONT, 8), bg=NAV,
+        tk.Label(info, text='本地工具  /  v' + VERSION + ' 预览版', font=(FONT, 8), bg=NAV,
                  fg='#74859d', anchor='w').pack(fill='x', pady=(16, 0))
 
         workspace = tk.Frame(self, bg=BG)
@@ -75,10 +76,12 @@ class App(tk.Tk):
         self.tabs = PageDeck(workspace, navigation)
         self.numbers = Numbers(self.tabs, self)
         self.cards = Cards(self.tabs, self)
+        self.training = Training(self.tabs, self)
         self.records = ttk.Frame(self.tabs, padding=(24, 20))
         self.setup = Setup(self.tabs, self)
         self.tabs.add(self.numbers, text='游玩中修改', subtitle='餐券与部队点数')
         self.tabs.add(self.cards, text='卡牌扩充', subtitle='选卡 · 图鉴 · 技能')
+        self.tabs.add(self.training, text='人物培养', subtitle='★等级 · 强化 · 餐券故事')
         self.tabs.add(self.records, text='记录与备份', subtitle='修改记录与原始存档')
         self.tabs.add(self.setup, text='设置与图鉴', subtitle='目录 · 连接 · 图鉴准备')
         self.build_records()
@@ -108,7 +111,7 @@ class App(tk.Tk):
                                   bg='#e9f6f0' if connected else '#fceef0')
 
     def build_records(self):
-        ttk.Label(self.records, text='每次修改都有记录，添加卡牌会自动保留原始存档。', style='Hint.TLabel').pack(anchor='w', pady=(0, 16))
+        ttk.Label(self.records, text='每次修改都有记录，加卡与培养修改会自动保留原始存档。', style='Hint.TLabel').pack(anchor='w', pady=(0, 16))
         bar = ttk.Frame(self.records)
         bar.pack(fill='x', pady=(0, 14))
         ttk.Button(bar, text='打开原档备份', command=self.open_backup).pack(side='left')
@@ -136,6 +139,9 @@ class App(tk.Tk):
                         summary = '部队总点数：%s → %s' % (r['bonus_before'][2], r['total_points'])
                     elif r.get('action') == 'cards':
                         summary = '%s号存档加卡：%s → %s张\n    %s' % (r['slot'], r['before'], r['after'], '、'.join(r['cards']))
+                    elif r.get('action') in ['star', 'enhancement']:
+                        summary = '%s号存档 · %s · %s：%s → %s' % (r['slot'], r['target'],
+                                   '人物★' if r['action'] == 'star' else '同卡强化', r['before'], r['after'])
                     else:
                         continue
                     lines.append(when + '  ' + summary)
@@ -159,6 +165,7 @@ class App(tk.Tk):
     def tab_changed(self, event=None):
         titles = {str(self.numbers): ('餐券与部队点数', '游戏运行时修改，点击后即时生效'),
                   str(self.cards): ('卡牌扩充', '查看卡面与技能，按存档选择要添加的卡牌'),
+                  str(self.training): ('人物培养', '提高人物★与同卡强化，查看餐券小故事条件'),
                   str(self.records): ('记录与备份', '查看修改记录，找到添加卡牌前的原始存档'),
                   str(self.setup): ('设置与图鉴', '选择你的游戏目录，准备本机卡牌图鉴')}
         title, hint = titles[self.tabs.select()]
@@ -169,10 +176,16 @@ class App(tk.Tk):
                 self.after(200, self.tab_changed)
             else:
                 self.cards.refresh()
+        elif self.tabs.select() == str(self.training) and not self.training.loaded:
+            if self.busy:
+                self.after(200, self.tab_changed)
+            else:
+                self.training.refresh()
 
     def update_actions(self):
         self.numbers.update_actions()
         self.cards.update_actions()
+        self.training.update_actions()
         if hasattr(self, 'setup'):
             self.setup.update_actions()
 

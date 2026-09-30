@@ -439,13 +439,21 @@ def prepare(path, identifiers, expected_sha):
 
 def apply(path, identifiers, expected_sha, backup_dir=None):
     check_version()
+    require(Path(path).resolve().parent == settings.save_dir().resolve(), '存档目录已经改变，请刷新目标存档。')
+    output, report = prepare(path, identifiers, expected_sha)
+    return install(path, expected_sha, output, report, '卡牌扩充', backup_dir)
+
+
+def install(path, expected_sha, output, report, label, backup_dir=None):
+    """Install only a validated edit, with a verified original and race checks."""
     backup_dir = Path(backup_dir) if backup_dir is not None else settings.backup_dir()
     path = Path(path)
     require(path.resolve().parent == settings.save_dir().resolve(), '存档目录已经改变，请刷新目标存档。')
     require(re.fullmatch(r'LocalSave\d+\.asd', path.name) is not None, '请选择正式手动存档。')
-    output, report = prepare(path, identifiers, expected_sha)
+    require(report.get('checked') is True and report.get('original_sha256') == expected_sha
+            and report.get('modified_sha256') == sha(output), '修改内容校验失败。')
     stamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S_%f')
-    backup = Path(backup_dir) / (stamp + '_卡牌扩充_' + path.stem)
+    backup = Path(backup_dir) / (stamp + '_' + label + '_' + path.stem)
     backup.mkdir(parents=True, exist_ok=False)
     source = path.read_bytes()
     require(sha(source) == expected_sha, '存档刚刚更新，已停止写入。请刷新。')
@@ -455,7 +463,7 @@ def apply(path, identifiers, expected_sha, backup_dir=None):
     thumb = path.parent / ('Thumb%04d.qnt' % metadata(parse(source, str(path)))['slot'])
     if thumb.exists():
         shutil.copy2(thumb, backup / thumb.name)
-    (backup / '扩充后的存档.asd').write_bytes(output)
+    (backup / '修改后的存档.asd').write_bytes(output)
     report['backup'] = str(backup)
     recordfile = backup / '修改记录.json'
     recordfile.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
@@ -474,5 +482,5 @@ def apply(path, identifiers, expected_sha, backup_dir=None):
     (backup / '恢复说明.txt').write_text(
         '原档：' + str(original_backup) + '\n目标：' + str(path) +
         '\n需要恢复时先关闭游戏，将原档复制回目标位置，再重新进入读档菜单。\n'
-        '恢复会回到扩充前的进度；请勿覆盖之后的新进度。\n', encoding='utf-8-sig')
+        '恢复会回到修改前的进度；请勿覆盖之后的新进度。\n', encoding='utf-8-sig')
     return report

@@ -182,7 +182,10 @@ def prepare_library(game, local_tool='', allow_download=False, progress=lambda m
         dump = work / 'catalog.x'
         progress('正在读取游戏中的卡牌和技能数据…')
         _run(tool, ['ex', 'dump'] + encoding + ['-o', dump, game / 'Rance10EX.ex'])
-        data = parse_catalog(dump.read_text(encoding='utf-8'))
+        source_text = dump.read_text(encoding='utf-8')
+        data = parse_catalog(source_text)
+        import character_data
+        character_info = character_data.parse(source_text)
         assets = {}
         archives = []
         for path in game.glob('Rance10CG*.afa'):
@@ -253,4 +256,5 @@ def prepare_library(game, local_tool='', allow_download=False, progress=lambda m
             temp = path.with_name(path.name + '.' + uuid.uuid4().hex + '.tmp')
             temp.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding='utf-8')
             temp.replace(path)
+        character_data.store(character_info)
         return dict(cards=len(manifest), missing_images=len(missing))

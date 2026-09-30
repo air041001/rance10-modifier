@@ -12,6 +12,7 @@ CONFIG_FILE = DATA_DIR / 'settings.json'
 LOG_FILE = DATA_DIR / 'operations.jsonl'
 ERROR_FILE = DATA_DIR / 'last-error.txt'
 CATALOG_FILE = CACHE_DIR / 'catalog.json'
+CHARACTER_FILE = CACHE_DIR / 'character-info.json'
 IMAGE_DIR = CACHE_DIR / 'cards'
 COMPONENT_DIR = DATA_DIR / 'components'
 

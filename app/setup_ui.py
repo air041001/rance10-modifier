@@ -69,6 +69,9 @@ class Setup(ttk.Frame):
         self.download_button = ttk.Button(row, text='从官方源下载并准备', command=lambda: self.prepare(True))
         self.download_button.pack(side='left', padx=10)
         self.controls += [self.local_button, self.download_button]
+        self.character_button = ttk.Button(row, text='更新人物资料', command=self.prepare_characters)
+        self.character_button.pack(side='left')
+        self.controls.append(self.character_button)
         self.library_status = ttk.Label(library, text=self.library_text(), style='SurfaceHint.TLabel', wraplength=850)
         self.library_status.pack(anchor='w', fill='x', pady=(12, 0))
         ttk.Button(self, text='打开配置与缓存目录', command=lambda: os.startfile(str(app_paths.DATA_DIR))).pack(anchor='w', pady=(16, 0))
@@ -107,6 +110,7 @@ class Setup(ttk.Frame):
             self.saves.set(config['save_dir'])
             engine.configure()
             self.owner.cards.invalidate()
+            self.owner.training.invalidate()
             self.owner.numbers.current = None
             self.feedback.configure(text='游戏版本检查通过，目录设置已保存。', foreground=GREEN)
             self.owner.numbers.refresh()
@@ -137,6 +141,7 @@ class Setup(ttk.Frame):
             settings.save(config['game_dir'], settings.save_dir(), tool)
             self.owner.images.reload()
             self.owner.cards.invalidate()
+            self.owner.training.invalidate()
             text = '图鉴已准备：%d 张卡面。' % report['cards']
             if report['missing_images']:
                 text += ' %d 张缺少图片，可用名称与技能查看。' % report['missing_images']
@@ -144,6 +149,21 @@ class Setup(ttk.Frame):
             self.owner.status.configure(text=text, foreground=GREEN)
         self.owner.run(lambda: assets.prepare_library(game, tool, download, self.owner.progress), done,
                        '正在准备卡牌图鉴…', lambda message: self.library_status.configure(text=message, foreground=RED))
+
+    def prepare_characters(self):
+        if not app_paths.CATALOG_FILE.exists():
+            self.failed('请先准备图鉴。新图鉴会同时准备人物资料。')
+            return
+        config = settings.load()
+        if self.game.get().strip() != config.get('game_dir') or self.saves.get().strip() != str(settings.save_dir()):
+            self.failed('目录已变更，请先点击“保存并检查”。')
+            return
+        import character_data
+        def done(report):
+            self.owner.training.invalidate()
+            self.library_status.configure(text='人物资料已更新：%d位。已有卡面保持可用。' % report['characters'], foreground=GREEN)
+        self.owner.run(lambda: character_data.prepare(settings.game_dir(), self.component.get().strip(), self.owner.progress),
+                       done, '正在更新人物资料…', lambda message: self.library_status.configure(text=message, foreground=RED))
 
     def update_actions(self):
         state = 'disabled' if self.owner.busy else 'normal'

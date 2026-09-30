@@ -2,6 +2,10 @@
 from pathlib import Path
 import subprocess
 import zipfile
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'app'))
+from game_profile import VERSION
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -17,10 +21,10 @@ def main():
         if any(marker in path.read_text(encoding='utf-8-sig') for marker in markers):
             if name != 'scripts/audit_release.py':
                 raise ValueError('Possible personal path or credential marker: ' + name)
-    packages = list((ROOT / 'release').glob('*.zip'))
+    packages = list((ROOT / 'release').glob('Rance10Modifier-v%s-windows-x64.zip' % VERSION))
     if len(packages) != 1:
         raise ValueError('Expected one release package.')
-    prohibited = ['alice.exe', 'catalog.json', 'manifest.json', 'settings.json', 'operations.jsonl', 'last-error.txt']
+    prohibited = ['alice.exe', 'catalog.json', 'character-info.json', 'manifest.json', 'settings.json', 'operations.jsonl', 'last-error.txt']
     forbidden = {'.asd', '.qnt', '.afa', '.ain', '.ex', '.x'}
     entries = zipfile.ZipFile(packages[0]).namelist()
     for name in entries:

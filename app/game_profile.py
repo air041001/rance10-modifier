@@ -1,4 +1,4 @@
-VERSION = '1.2.0'
+VERSION = '1.3.0'
 PROFILE_ID = 'rance10-zh-v8-01'
 GAME_HASHES = {
     'Rance10.exe': '39a508c05b13afc5427f0b722fce5c4edeced126587e037d585cf0e70d279297',
@@ -7,6 +7,7 @@ GAME_HASHES = {
 }
 # Card fields and every skill field except the display-only description.
 CATALOG_DIGEST = '971bb4b6bc112f25ee28b5435885dea62b8f5bc42b4b68ae4648ee05fc48ea09'
+CHARACTER_DIGEST = '20909a623a08f0ed760d1dc1cf3c5af106b79e2c1ae6f892ff0028933e96310b'
 ALICE_VERSION = '0.13.0'
 ALICE_SHA256 = '4123746e53a6b51eaae06c18ce145ecc8f866a0fc376541d8e9e529aa805a6de'
 ALICE_URL = 'https://github.com/nunuhara/alice-tools/releases/download/0.13.0/alice-tools-0.13.0.zip'

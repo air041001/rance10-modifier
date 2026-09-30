@@ -373,6 +373,7 @@ class Cards(ttk.Frame):
         self.owner.run(lambda: engine.apply(c['path'], ids, c['sha']), self.applied, '正在备份、添加并校验存档…')
 
     def applied(self, report):
+        self.owner.training.invalidate()
         self.owner.backup = report['backup']
         self.owner.log(dict(action='cards', time=datetime.datetime.now().isoformat(timespec='seconds'),
                             slot=self.context['slot'], before=report['before_count'], after=report['after_count'],

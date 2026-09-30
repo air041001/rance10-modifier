@@ -22,7 +22,8 @@ def run():
     app.attributes('-alpha', 0)
     app.update()
     geometry = []
-    for page in [app.setup, app.numbers, app.records, app.setup]:
+    app.training.loaded = True  # No background read is needed for geometry checks.
+    for page in [app.setup, app.numbers, app.training, app.records, app.setup]:
         app.tabs.select(page)
         app.update()
         geometry.append([[row[0].winfo_width(), row[0].winfo_height()] for row in app.tabs.items.values()])
@@ -63,6 +64,23 @@ def run():
                 app.update()
                 state['cards']['ultra_rare'] = len(app.cards.visible)
                 assert all(r['rarity'] == '超稀有' for r in app.cards.visible)
+                if app_paths.CHARACTER_FILE.exists():
+                    import training
+                    cultivation = training.inspect(context['path'])
+                    app.training.context_loaded(cultivation)
+                    app.tabs.select(app.training)
+                    app.update()
+                    assert app.training.active is not None
+                    state['training'] = dict(characters=len(app.training.characters),
+                         cards=len(app.training.rows), image_loaded=bool(app.training.photo),
+                         story_text=app.training.story_text.cget('text'))
+                    app.training.query.set('玛丽斯')
+                    app.update()
+                    assert '玛丽斯' in app.training.characters
+                    app.training.query.set('not-an-existing-character')
+                    app.update()
+                    assert not app.training.characters
+                    assert app.training.star_button.instate(['disabled'])
     assert state['helper'] and state['instructions']
     assert all(sizes == geometry[0] for sizes in geometry)
     assert state['setup_bottom'] < state['window_bottom']
