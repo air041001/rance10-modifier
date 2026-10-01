@@ -98,7 +98,8 @@ def main():
     for name in ['README.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'CHANGELOG.md']:
         shutil.copy2(ROOT / name, package / name)
     (package / 'docs').mkdir(exist_ok=True)
-    shutil.copy2(ROOT / 'docs/NEXT_STAGE.md', package / 'docs/NEXT_STAGE.md')
+    for document in (ROOT / 'docs').glob('*.md'):
+        shutil.copy2(document, package / 'docs' / document.name)
     release = ROOT / 'release'
     release.mkdir(exist_ok=True)
     archive = release / ('Rance10Modifier-v%s-windows-x64.zip' % VERSION)
