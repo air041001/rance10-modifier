@@ -1,0 +1,52 @@
+"""Regression coverage for excluded variants and upgrading existing images."""
+import hashlib
+import json
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+from PIL import Image
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'app'))
+import app_paths
+import assets
+import engine
+
+
+class LibraryTests(unittest.TestCase):
+    def test_nude_variant_uses_same_character_and_skill_support(self):
+        card = dict(Id='裸体 测试角色', 種別=0, 出现=1, 削除=0, 裸=1, 所属=1,
+                    识别名='角色', **{'技能１': 5, '技能２': 0})
+        self.assertTrue(engine.displayable(card))
+        self.assertTrue(engine.eligible(card, {'角色': object()}, {5: object()}))
+        self.assertFalse(engine.eligible(card, {}, {5: object()}))
+        self.assertFalse(engine.eligible(card, {'角色': object()}, {}))
+
+    def test_old_library_reports_missing_variants_and_keeps_existing_png(self):
+        with tempfile.TemporaryDirectory(prefix='rance-library-') as folder:
+            folder = Path(folder)
+            ident = 'Lv1 示例'
+            filename = hashlib.sha256(ident.encode('utf-8')).hexdigest()[:24] + '.png'
+            Image.new('RGBA', (208, 312), '#123456').save(folder / filename)
+            before = (folder / filename).read_bytes()
+            (folder / 'manifest.json').write_text(json.dumps({ident: dict(file=filename)}))
+            cards = {key: dict(Id=key, 種別=0, 出现=1, 削除=0, 裸=nude, 所属=1)
+                     for key, nude in [(ident, 0), ('裸体 示例', 1)]}
+            with patch.object(app_paths, 'IMAGE_DIR', folder), patch.object(engine, 'catalog', return_value=(cards, {})):
+                self.assertEqual(assets.library_status(), dict(expected=2, ready=1, missing=1))
+                self.assertEqual((folder / filename).read_bytes(), before)
+
+    def test_broken_image_is_missing_even_when_manifest_entry_exists(self):
+        with tempfile.TemporaryDirectory(prefix='rance-library-') as folder:
+            folder = Path(folder)
+            ident = '裸体 示例'
+            filename = hashlib.sha256(ident.encode('utf-8')).hexdigest()[:24] + '.png'
+            (folder / filename).write_bytes(b'broken PNG')
+            (folder / 'manifest.json').write_text(json.dumps({ident: dict(file=filename)}))
+            with patch.object(app_paths, 'IMAGE_DIR', folder):
+                self.assertEqual(assets.cached_images(), {})
+
+
+if __name__ == '__main__':
+    unittest.main()

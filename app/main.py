@@ -101,6 +101,7 @@ class App(tk.Tk):
             self.tabs.select(self.setup)
         elif auto_connect:
             self.after(250, self.numbers.refresh)
+            self.after(750, self.setup.repair_existing_library)
 
     def style(self):
         self.theme = configure_styles(self)

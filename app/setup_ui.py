@@ -84,7 +84,46 @@ class Setup(ttk.Frame):
         self.update_actions()
 
     def library_text(self):
-        return '本机图鉴已准备，可前往“卡牌扩充”。' if app_paths.CATALOG_FILE.exists() else '尚未准备图鉴。下载方式首次需要联网，组件只从原项目官方 GitHub 获取。'
+        if not app_paths.CATALOG_FILE.exists():
+            return '尚未准备图鉴。下载方式首次需要联网，组件只从原项目官方 GitHub 获取。'
+        try:
+            report = assets.library_status()
+        except (ValueError, OSError) as exc:
+            return str(exc)
+        if report['missing']:
+            return '图鉴共 %d 张，已有 %d 张卡面，还需补齐 %d 张。已有组件可离线补齐。' % (report['expected'], report['ready'], report['missing'])
+        return '本机图鉴已准备：%d 张卡面，可前往“卡牌扩充”。' % report['ready']
+
+    def library_ready(self, report):
+        self.owner.images.reload()
+        self.owner.cards.invalidate()
+        self.owner.training.invalidate()
+        text = '图鉴已准备：%d 张卡面（本次补齐 %d 张，复用 %d 张）。' % (report['cards'], report['generated'], report['reused'])
+        if report['missing_images']:
+            text += ' %d 张缺少图片，可用名称与技能查看。' % report['missing_images']
+        self.library_status.configure(text=text, foreground=GREEN)
+        self.owner.status.configure(text=text, foreground=GREEN)
+        self.owner.tab_changed()
+
+    def repair_existing_library(self):
+        """Upgrade an existing library from local resources without downloading."""
+        if self.owner.busy:
+            self.owner.after(250, self.repair_existing_library)
+            return
+        config = settings.load()
+        if not app_paths.CATALOG_FILE.exists() or not config.get('game_dir'):
+            return
+        try:
+            if not assets.library_status()['missing']:
+                return
+        except (ValueError, OSError) as exc:
+            self.library_status.configure(text=str(exc), foreground=RED)
+            return
+        def failed(message):
+            self.library_status.configure(text='卡牌列表已补全，卡面补齐未完成：' + message + ' 可使用上方准备按钮重试。', foreground=RED)
+        self.owner.run(lambda: assets.prepare_library(config['game_dir'], config.get('alice_path', ''),
+                       False, self.owner.progress), self.library_ready,
+                       '正在从本机游戏补齐旧图鉴的卡面…', failed)
 
     def layout_actions(self, event=None):
         buttons = [self.local_button, self.download_button, self.character_button]
@@ -162,14 +201,7 @@ class Setup(ttk.Frame):
         def done(report):
             config = settings.load()
             settings.save(config['game_dir'], settings.save_dir(), tool)
-            self.owner.images.reload()
-            self.owner.cards.invalidate()
-            self.owner.training.invalidate()
-            text = '图鉴已准备：%d 张卡面。' % report['cards']
-            if report['missing_images']:
-                text += ' %d 张缺少图片，可用名称与技能查看。' % report['missing_images']
-            self.library_status.configure(text=text, foreground=GREEN)
-            self.owner.status.configure(text=text, foreground=GREEN)
+            self.library_ready(report)
         self.owner.run(lambda: assets.prepare_library(game, tool, download, self.owner.progress), done,
                        '正在准备卡牌图鉴…', lambda message: self.library_status.configure(text=message, foreground=RED))
 

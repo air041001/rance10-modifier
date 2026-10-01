@@ -170,6 +170,37 @@ def _run(tool, args, timeout=90):
     return result.stdout.decode('utf-8', errors='strict')
 
 
+def cached_images():
+    """Return reusable generated cards, including checking the actual PNG files."""
+    try:
+        entries = json.loads((app_paths.IMAGE_DIR / 'manifest.json').read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(entries, dict):
+        return {}
+    result = {}
+    for ident, entry in entries.items():
+        if not isinstance(entry, dict) or entry.get('file') != _sha(ident.encode('utf-8'))[:24] + '.png':
+            continue
+        try:
+            with Image.open(app_paths.IMAGE_DIR / entry['file']) as image:
+                if image.format != 'PNG' or image.size != (208, 312):
+                    continue
+                image.verify()
+        except (OSError, ValueError):
+            continue
+        result[ident] = entry
+    return result
+
+
+def library_status():
+    import engine
+    table, _ = engine.catalog()
+    expected = {ident for ident, row in table.items() if engine.displayable(row)}
+    ready = expected.intersection(cached_images())
+    return dict(expected=len(expected), ready=len(ready), missing=len(expected - ready))
+
+
 def prepare_library(game, local_tool='', allow_download=False, progress=lambda message: None):
     import engine
     game = Path(game)
@@ -210,9 +241,15 @@ def prepare_library(game, local_tool='', allow_download=False, progress=lambda m
                 missing.append(row['Id'])
                 continue
             entries[row['Id']] = dict(asset=name, cg=row['ＣＧ名'], faction=engine.ORG_NAMES[row['所属']])
-        needed = {row['asset'] for row in entries.values()}
+        cached = cached_images()
+        reused = {ident: cached[ident] for ident, row in entries.items()
+                  if ident in cached and cached[ident].get('cg') == row['cg']
+                  and cached[ident].get('source') == row['asset']
+                  and cached[ident].get('faction') == row['faction']}
+        pending = {ident: row for ident, row in entries.items() if ident not in reused}
+        needed = {row['asset'] for row in pending.values()}
         frames = {}
-        for faction in {row['faction'] for row in entries.values()}:
+        for faction in {row['faction'] for row in pending.values()}:
             resource = 'ＪＡＰＡＮ' if faction == 'JAPAN' else faction
             names = ['シス／卡牌／%s／%s所属.ajp' % (part, resource) for part in ['下地', '枠']]
             if all(name in assets for name in names):
@@ -228,14 +265,14 @@ def prepare_library(game, local_tool='', allow_download=False, progress=lambda m
             return name, output
 
         extracted = {}
-        progress('正在生成卡面，请稍候…')
+        progress('保留已有 %d 张卡面，正在补齐 %d 张…' % (len(reused), len(pending)))
         with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
             for i, (name, path) in enumerate(pool.map(extract, sorted(needed)), 1):
                 extracted[name] = path
                 if i % 30 == 0:
                     progress('正在生成卡面：%d / %d' % (i, len(needed)))
-        manifest = {}
-        for ident, row in entries.items():
+        manifest = dict(reused)
+        for ident, row in pending.items():
             with Image.open(extracted[row['asset']]) as art:
                 card = Image.new('RGBA', (208, 312), '#e8eef6')
                 if row['faction'] in frames:
@@ -257,4 +294,5 @@ def prepare_library(game, local_tool='', allow_download=False, progress=lambda m
             temp.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding='utf-8')
             temp.replace(path)
         character_data.store(character_info)
-        return dict(cards=len(manifest), missing_images=len(missing))
+        return dict(cards=len(manifest), missing_images=len(missing),
+                    generated=len(pending), reused=len(reused))

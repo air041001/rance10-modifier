@@ -266,7 +266,7 @@ def collection(s):
 
 def displayable(row):
     """First-part character cards, including event and special appearances."""
-    return (row['種別'] == 0 and row['出现'] in (1, 3) and row['削除'] == 0 and row['裸'] == 0
+    return (row['種別'] == 0 and row['出现'] in (1, 3) and row['削除'] == 0
             and 1 <= row['所属'] <= 10 and not row['Id'].startswith('测试'))
 
 
@@ -294,6 +294,7 @@ def inspect(path):
                    if row['识别名'] not in chars else '当前技能记录尚未适配，暂不能添加。')
         rows.append(dict(id=ident, character=row['识别名'], org=row['所属'], faction=ORG_NAMES[row['所属']],
                          hp=row['ＨＰ'], atk=row['ＡＴＫ'], star=star, rarity=rarity, appearance=row['出现'],
+                         nude=bool(row['裸']),
                          available=available, unavailable_reason=reason,
                          basic=bool(re.fullmatch(r'Lv\d+ ' + re.escape(row['识别名']), ident)),
                          owned=ident in owned or ident in pending,

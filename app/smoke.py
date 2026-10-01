@@ -1,4 +1,4 @@
-"""Read-only launch verification for development and packaged builds."""
+"""Launch verification without save writes; optional local image-cache upgrade."""
 import argparse
 import json
 import sys
@@ -15,6 +15,7 @@ def run():
     from main import App
     parser = argparse.ArgumentParser()
     parser.add_argument('--self-test', action='store_true')
+    parser.add_argument('--upgrade-library', action='store_true')
     parser.add_argument('--output', required=True)
     options = parser.parse_args()
     app = App(auto_connect=False)
@@ -24,6 +25,19 @@ def run():
     app.deiconify()
     app.attributes('-alpha', 0)
     app.update()
+    upgrade = None
+    if options.upgrade_library:
+        import assets
+        before = assets.library_status()
+        app.setup.repair_existing_library()
+        deadline = time.monotonic() + 90
+        while app.busy:
+            app.update()
+            assert time.monotonic() < deadline, 'Existing library upgrade did not finish'
+            time.sleep(.02)
+        after = assets.library_status()
+        assert after['missing'] == 0, app.setup.library_status.cget('text')
+        upgrade = dict(before=before, after=after)
     geometry = []
     app.training.loaded = True  # No background read is needed for geometry checks.
     for page in [app.setup, app.numbers, app.training, app.records, app.setup]:
@@ -55,6 +69,7 @@ def run():
                  instructions=(app_paths.RESOURCE_DIR / '使用说明.txt').is_file(),
                  navigation=geometry,
                  missing_library_stays_on_page=True, setup_controls_visible=setup_controls,
+                 library_upgrade=upgrade,
                  value_font=font.Font(app, font=app.theme.lookup('Value.TLabel', 'font')).actual(),
                  window_bottom=app.winfo_rooty() + app.winfo_height())
     import runtime
@@ -89,6 +104,14 @@ def run():
                 app.tabs.select(app.cards)
                 app.update()
                 state['cards'] = dict(displayed=len(app.cards.visible), image_loaded=bool(app.cards.preview_photo))
+                nude_cards = [row for row in app.cards.visible if row['nude']]
+                state['cards']['nude'] = len(nude_cards)
+                if nude_cards:
+                    assert all(app.images.get(row['id']) is not None for row in nude_cards), 'Nude card images are missing'
+                    app.cards.detail(nude_cards[0])
+                    app.update()
+                    assert app.cards.preview_photo is not None
+                    state['cards']['nude_images_loaded'] = True
                 app.cards.rarity.set('特级')
                 app.cards.filter()
                 app.update()
