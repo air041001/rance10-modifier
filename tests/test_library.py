@@ -20,8 +20,23 @@ class LibraryTests(unittest.TestCase):
                     识别名='角色', **{'技能１': 5, '技能２': 0})
         self.assertTrue(engine.displayable(card))
         self.assertTrue(engine.eligible(card, {'角色': object()}, {5: object()}))
-        self.assertFalse(engine.eligible(card, {}, {5: object()}))
+        self.assertTrue(engine.eligible(card, {}, {5: object()}))
         self.assertFalse(engine.eligible(card, {'角色': object()}, {}))
+
+    def test_formal_item_generic_and_second_part_cards_are_included(self):
+        for kind in (0, 5, 10):
+            for appearance in (1, 2, 3):
+                card = dict(Id='示例卡', 種別=kind, 出现=appearance, 削除=0, 所属=2,
+                            识别名='角色', **{'技能１': 5, '技能２': 0})
+                self.assertTrue(engine.eligible(card, {}, {5: object()}))
+        for changes in [dict(種別=88), dict(削除=88), dict(Id='测试 人物')]:
+            self.assertFalse(engine.displayable(dict(card, **changes)))
+
+    def test_item_descriptions_include_quoted_card_names(self):
+        source = 'tree 卡牌情报 = {\n\t"长剑 示例" = {\n\t\t说明１ = "古老的剑",\n\t\t说明２ = "第一行\\n第二行",\n\t},\n};'
+        self.assertEqual(assets.parse_item_info(source), {'长剑 示例': ['古老的剑', '第一行', '第二行']})
+        source = source.replace('"长剑 示例"', '赫卡忒\u3000')
+        self.assertIn('赫卡忒\u3000', assets.parse_item_info(source))
 
     def test_old_library_reports_missing_variants_and_keeps_existing_png(self):
         with tempfile.TemporaryDirectory(prefix='rance-library-') as folder:

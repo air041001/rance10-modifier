@@ -114,7 +114,7 @@ class Setup(ttk.Frame):
         if not app_paths.CATALOG_FILE.exists() or not config.get('game_dir'):
             return
         try:
-            if not assets.library_status()['missing']:
+            if not assets.library_status()['missing'] and app_paths.ITEM_FILE.exists():
                 return
         except (ValueError, OSError) as exc:
             self.library_status.configure(text=str(exc), foreground=RED)

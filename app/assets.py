@@ -12,7 +12,7 @@ import os
 import urllib.request
 import uuid
 import zipfile
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 import app_paths
 import game_profile as profile
 
@@ -77,6 +77,41 @@ def parse_catalog(text):
     data = dict(cards=parse_table(text, '卡牌数据'), skills=parse_table(text, '技能数据'))
     validate_catalog(data)
     return data
+
+
+def parse_item_info(text):
+    start = text.find('tree 卡牌情报 = {')
+    end = text.find('\n};', start)
+    if start < 0 or end < 0:
+        raise ValueError('缺少卡牌说明。')
+    result = {}
+    for match in re.finditer(r'^\t("(?:[^"\\]|\\.)*"|[^\r\n=]+?) = \{\n(.*?)^\t\},', text[start:end], re.M | re.S):
+        key = json.loads(match[1]) if match[1].startswith('"') else match[1]
+        lines = []
+        for number in '１２３４５６７８９':
+            value = re.search(r'^\s*(?:string )?说明' + number + r' = ("(?:[^"\\]|\\.)*"),?\s*$', match[2], re.M)
+            if value:
+                lines.extend(line for line in json.loads(value[1]).splitlines() if line)
+        if lines:
+            result[key] = lines
+    return result
+
+
+def draw_item_text(card, name, lines):
+    """Use the same description/name positions as the game's item front."""
+    fonts = Path(os.environ.get('WINDIR', r'C:\Windows')) / 'Fonts'
+    font_path = next((fonts / name for name in ['msyh.ttc', 'simsun.ttc', 'simhei.ttf'] if (fonts / name).is_file()), None)
+    if not font_path:
+        return
+    font = ImageFont.truetype(str(font_path), 14)
+    draw = ImageDraw.Draw(card)
+    for i, line in enumerate(lines[:3]):
+        draw.text((14, 208 + i * 17), line, font=font, fill='#f5eac9', stroke_width=1, stroke_fill='#3c2b16')
+    size = 14
+    while size > 9 and font.getlength(name) > 184:
+        size -= 1
+        font = ImageFont.truetype(str(font_path), size)
+    draw.text((104, 283), name, anchor='mt', font=font, fill='#fff4d2', stroke_width=1, stroke_fill='#33210c')
 
 
 def validate_catalog(data):
@@ -215,6 +250,7 @@ def prepare_library(game, local_tool='', allow_download=False, progress=lambda m
         _run(tool, ['ex', 'dump'] + encoding + ['-o', dump, game / 'Rance10EX.ex'])
         source_text = dump.read_text(encoding='utf-8')
         data = parse_catalog(source_text)
+        item_info = parse_item_info(source_text)
         import character_data
         character_info = character_data.parse(source_text)
         assets = {}
@@ -235,25 +271,29 @@ def prepare_library(game, local_tool='', allow_download=False, progress=lambda m
         for row in data['cards']:
             if not engine.displayable(row):
                 continue
+            prefix = '卡牌／物品／' if row['種別'] == 10 else '卡牌／'
             name = next((name for ext in ['.ajp', '.qnt', '.dcf', '.webp', '.png']
-                         if (name := '卡牌／' + row['ＣＧ名'] + ext) in assets), None)
+                         if (name := prefix + row['ＣＧ名'] + ext) in assets), None)
             if not name:
                 missing.append(row['Id'])
                 continue
-            entries[row['Id']] = dict(asset=name, cg=row['ＣＧ名'], faction=engine.ORG_NAMES[row['所属']])
+            entries[row['Id']] = dict(asset=name, cg=row['ＣＧ名'], faction=engine.ORG_NAMES[row['所属']],
+                item=row['種別'] == 10, name=row['Id'], description=item_info.get(row['Id'], []))
         cached = cached_images()
         reused = {ident: cached[ident] for ident, row in entries.items()
                   if ident in cached and cached[ident].get('cg') == row['cg']
                   and cached[ident].get('source') == row['asset']
-                  and cached[ident].get('faction') == row['faction']}
+                  and cached[ident].get('faction') == row['faction']
+                  and (not row['item'] or (cached[ident].get('item_layout') == 1
+                       and cached[ident].get('description') == row['description']))}
         pending = {ident: row for ident, row in entries.items() if ident not in reused}
         needed = {row['asset'] for row in pending.values()}
         frames = {}
-        for faction in {row['faction'] for row in pending.values()}:
+        for faction, item in {(row['faction'], row['item']) for row in pending.values()}:
             resource = 'ＪＡＰＡＮ' if faction == 'JAPAN' else faction
-            names = ['シス／卡牌／%s／%s所属.ajp' % (part, resource) for part in ['下地', '枠']]
+            names = ['シス／卡牌／%s／%s所属%s.ajp' % (part, resource, '／物品' if item else '') for part in ['下地', '枠']]
             if all(name in assets for name in names):
-                frames[faction] = names
+                frames[(faction, item)] = names
                 needed.update(names)
 
         def extract(name):
@@ -273,23 +313,30 @@ def prepare_library(game, local_tool='', allow_download=False, progress=lambda m
                     progress('正在生成卡面：%d / %d' % (i, len(needed)))
         manifest = dict(reused)
         for ident, row in pending.items():
+            frame_key = (row['faction'], row['item'])
             with Image.open(extracted[row['asset']]) as art:
                 card = Image.new('RGBA', (208, 312), '#e8eef6')
-                if row['faction'] in frames:
-                    pair = frames[row['faction']]
+                if frame_key in frames:
+                    pair = frames[frame_key]
                     with Image.open(extracted[pair[0]]) as bg:
                         card = bg.convert('RGBA')
                 if card.size != (208, 312) or art.size != (208, 312):
                     raise ValueError('卡面尺寸不匹配，已停止准备。')
                 card.alpha_composite(art.convert('RGBA'))
-                if row['faction'] in frames:
+                if frame_key in frames:
                     with Image.open(extracted[pair[1]]) as border:
                         card.alpha_composite(border.convert('RGBA'))
+                if row['item']:
+                    draw_item_text(card, row['name'], row['description'])
                 filename = _sha(ident.encode('utf-8'))[:24] + '.png'
                 card.save(app_paths.IMAGE_DIR / filename, optimize=True)
                 manifest[ident] = dict(file=filename, cg=row['cg'], source=row['asset'], faction=row['faction'])
+                if row['item']:
+                    manifest[ident]['item_layout'] = 1
+                    manifest[ident]['description'] = row['description']
         # Install only after generation and data validation succeed.
-        for path, value in [(app_paths.CATALOG_FILE, data), (app_paths.IMAGE_DIR / 'manifest.json', manifest)]:
+        for path, value in [(app_paths.CATALOG_FILE, data), (app_paths.ITEM_FILE, item_info),
+                            (app_paths.IMAGE_DIR / 'manifest.json', manifest)]:
             temp = path.with_name(path.name + '.' + uuid.uuid4().hex + '.tmp')
             temp.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding='utf-8')
             temp.replace(path)

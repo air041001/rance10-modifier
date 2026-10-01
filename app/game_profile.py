@@ -1,4 +1,4 @@
-VERSION = '1.3.2'
+VERSION = '1.3.3'
 PROFILE_ID = 'rance10-zh-v8-01'
 GAME_HASHES = {
     'Rance10.exe': '39a508c05b13afc5427f0b722fce5c4edeced126587e037d585cf0e70d279297',

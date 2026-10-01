@@ -38,7 +38,7 @@ class Cards(ttk.Frame):
         goalbox.pack(side='right')
         ttk.Label(goalbox, text='目标数量', style='Hint.TLabel').pack(side='left', padx=(0, 8))
         self.goal_value = tk.IntVar(value=200)
-        self.goal_spin = ttk.Spinbox(goalbox, from_=1, to=600, textvariable=self.goal_value, width=5, font=(FONT, 10))
+        self.goal_spin = ttk.Spinbox(goalbox, from_=1, to=984, textvariable=self.goal_value, width=5, font=(FONT, 10))
         self.goal_spin.pack(side='left')
         self.goal_value.trace_add('write', lambda *a: self.update_actions())
 
@@ -64,6 +64,18 @@ class Cards(ttk.Frame):
                        textvariable=self.version, state='readonly', width=9, font=(FONT, 10))
         self.versionbox.grid(row=0, column=3)
         self.versionbox.bind('<<ComboboxSelected>>', lambda e: self.filter())
+        extra = ttk.Frame(filters)
+        extra.grid(row=1, column=0, columnspan=4, sticky='w', pady=(8, 0))
+        self.kind = tk.StringVar(value='全部类型')
+        self.kindbox = ttk.Combobox(extra, values=['全部类型', '人物', '通用', '物品'],
+                       textvariable=self.kind, state='readonly', width=10, font=(FONT, 10))
+        self.kindbox.pack(side='left', padx=(0, 10))
+        self.kindbox.bind('<<ComboboxSelected>>', lambda e: self.filter())
+        self.appearance = tk.StringVar(value='全部范围')
+        self.appearancebox = ttk.Combobox(extra, values=['全部范围', '第一部及特殊', '第二部', '特殊出现'],
+                       textvariable=self.appearance, state='readonly', width=14, font=(FONT, 10))
+        self.appearancebox.pack(side='left')
+        self.appearancebox.bind('<<ComboboxSelected>>', lambda e: self.filter())
         checks = ttk.Frame(self.content)
         checks.pack(fill='x', pady=(0, 10))
         ttk.Label(checks, text='卡名 / 技能', style='Hint.TLabel').pack(side='left', padx=(0, 18))
@@ -97,9 +109,9 @@ class Cards(ttk.Frame):
         self.gallery = Gallery(self.left, owner.images, self.detail, self.toggle)
         self.gallery.pack(fill='both', expand=True)
         self.list_frame = ttk.Frame(self.left)
-        cols = ('check', 'name', 'rarity', 'faction', 'star', 'owned')
+        cols = ('check', 'name', 'kind', 'rarity', 'faction', 'star', 'owned')
         self.tree = ttk.Treeview(self.list_frame, columns=cols, show='headings', selectmode='browse')
-        for key, label, width in [('check', '选', 40), ('name', '卡牌', 210), ('rarity', '稀有度', 78),
+        for key, label, width in [('check', '选', 40), ('name', '卡牌', 190), ('kind', '类型', 54), ('rarity', '稀有度', 72),
                                   ('faction', '阵营', 78), ('star', '星级', 54), ('owned', '状态', 96)]:
             self.tree.heading(key, text=label)
             self.tree.column(key, width=width, minwidth=width, stretch=key == 'name',
@@ -195,6 +207,7 @@ class Cards(ttk.Frame):
 
     def context_loaded(self, context):
         self.context, self.selected, self.active = context, set(), None
+        self.goal_spin.configure(to=len(context['cards']))
         self.only_selected.set(False)
         if context['manual']:
             text = '目标：%d号（%s）。添加后请重新读取这个存档；游玩中未保存的进度不在这里。' % (context['slot'], context['time'])
@@ -207,7 +220,8 @@ class Cards(ttk.Frame):
 
     def goal(self):
         try:
-            return min(600, max(1, int(self.goal_value.get())))
+            maximum = len(self.context['cards']) if self.context else 984
+            return min(maximum, max(1, int(self.goal_value.get())))
         except (ValueError, tk.TclError):
             return 200
 
@@ -233,7 +247,16 @@ class Cards(ttk.Frame):
                     continue
                 if self.faction.get() != '全部阵营' and r['faction'] != self.faction.get():
                     continue
-                if q and q not in unicodedata.normalize('NFKC', r['id'] + ' ' + r['skills'] + ' ' + r['details']).casefold():
+                if self.kind.get() != '全部类型' and r['kind'] != self.kind.get():
+                    continue
+                scope = self.appearance.get()
+                if scope == '第一部及特殊' and r['appearance'] not in (1, 3):
+                    continue
+                if scope == '第二部' and r['appearance'] != 2:
+                    continue
+                if scope == '特殊出现' and r['appearance'] != 3:
+                    continue
+                if q and q not in unicodedata.normalize('NFKC', r['id'] + ' ' + r['skills'] + ' ' + r['details'] + ' ' + r['description']).casefold():
                     continue
             result.append(r)
         self.visible = result
@@ -242,7 +265,7 @@ class Cards(ttk.Frame):
             checked = r['id'] in self.selected
             status = '已持有' if r['owned'] else ('可添加' if r['available'] else '暂不可加')
             self.tree.insert('', 'end', iid=str(i), values=('☑' if checked else ('—' if r['owned'] or not r['available'] else '☐'),
-                            r['id'], r['rarity'], r['faction'], r['star'], status),
+                            r['id'], r['kind'], r['rarity'], r['faction'], r['star'], status),
                              tags=('owned',) if r['owned'] else (('unavailable',) if not r['available'] else (('checked',) if checked else ())))
         self.gallery.set_cards(result, self.selected, self.active)
         self.result_text.configure(text='显示 %d 张  ·  特级 %d 张  ·  超稀有 %d 张  ·  当前可添加 %d 张' %
@@ -270,10 +293,17 @@ class Cards(ttk.Frame):
         self.title.configure(text=r['id'])
         self.preview_photo = self.owner.images.get(r['id'], (176, 264))
         self.preview.configure(image=self.preview_photo if self.preview_photo else '')
-        self.card_hint.configure(text='%s  ·  %s  ·  ★%s\n%s' % (r['rarity'], r['faction'], r['star'],
+        star_label = '共享物品★' if r['kind'] == '物品' else '培养★'
+        self.card_hint.configure(text='%s · %s · %s\n%s%s · %s' % (r['kind'], r['rarity'], r['faction'], star_label, r['star'],
                                 '已持有' if r['owned'] else ('可以添加' if r['available'] else '暂不可添加')))
+        note = '物品使用当前进度的共享物品星级。' if r['kind'] == '物品' else (
+               '添加时按游戏规则建立角色，初始培养★%s。' % r['star'] if r['new_character'] else '沿用角色当前培养星级。')
         text = '基础HP %s   基础AT %s\n\n%s\n\n%s' % (r['hp'], r['atk'], r['details'],
-               '沿用角色当前培养星级。' if r['available'] else r['unavailable_reason'])
+               note if r['available'] else r['unavailable_reason'])
+        if r['description']:
+            text = r['description'] + '\n\n' + text
+        if r['appearance'] == 2:
+            text += '\n\n第二部版本，请按需单独选择。'
         if r['appearance'] == 3:
             text += '\n\n特殊出现版本，请按需单独选择。'
         self.details.configure(text=text)
@@ -297,9 +327,6 @@ class Cards(ttk.Frame):
         if r['id'] in self.selected:
             self.selected.remove(r['id'])
         else:
-            if len(self.selected) >= 200:
-                self.owner.status.configure(text='单次最多添加200张，请减少勾选。')
-                return
             self.selected.add(r['id'])
         self.detail(r)
         if self.only_selected.get():
@@ -339,7 +366,7 @@ class Cards(ttk.Frame):
     def suggest(self):
         if not self.context or self.owner.busy:
             return
-        ids = engine.suggest(self.context, self.goal(), self.selected)[:max(0, 200 - len(self.selected))]
+        ids = engine.suggest(self.context, self.goal(), self.selected)
         self.selected.update(ids)
         self.only_selected.set(True)
         self.filter()

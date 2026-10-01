@@ -122,6 +122,34 @@ def run():
                 app.update()
                 state['cards']['ultra_rare'] = len(app.cards.visible)
                 assert all(r['rarity'] == '超稀有' for r in app.cards.visible)
+                app.cards.rarity.set('全部稀有度')
+                types = {}
+                for kind in ['人物', '通用', '物品']:
+                    app.cards.kind.set(kind)
+                    app.cards.filter()
+                    app.update()
+                    types[kind] = len(app.cards.visible)
+                    assert all(r['kind'] == kind for r in app.cards.visible)
+                    assert all(app.images.get(r['id']) is not None for r in app.cards.visible)
+                assert types == {'人物': 662, '通用': 145, '物品': 177}, types
+                sword = next(r for r in app.cards.visible if r['id'] == '利萨斯圣剑')
+                app.cards.detail(sword)
+                app.update()
+                assert '共享物品★' in app.cards.card_hint.cget('text')
+                assert '使用过的圣剑' in app.cards.details.cget('text')
+                state['cards']['types'] = types
+                state['cards']['item_preview_loaded'] = bool(app.cards.preview_photo)
+                app.cards.kind.set('全部类型')
+                scopes = {}
+                for scope, expected in [('第一部及特殊', 857), ('第二部', 127)]:
+                    app.cards.appearance.set(scope)
+                    app.cards.filter()
+                    app.update()
+                    scopes[scope] = len(app.cards.visible)
+                    assert len(app.cards.visible) == expected
+                app.cards.appearance.set('全部范围')
+                app.cards.filter()
+                state['cards']['scopes'] = scopes
                 if app_paths.CHARACTER_FILE.exists():
                     import training
                     cultivation = training.inspect(context['path'])

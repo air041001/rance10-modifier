@@ -19,6 +19,7 @@ BASE = app_paths.RESOURCE_DIR
 SAVE_DIR = settings.save_dir()
 BACKUP_DIR = settings.backup_dir()
 ORG_NAMES = ['', '主人公', '利萨斯', '赫尔曼', '赛斯', '自由都市', 'JAPAN', '其他', '亚人', '怪物', '神魔']
+CARD_KINDS = {0: '人物', 5: '通用', 10: '物品'}
 EX_HASH = 'd340aaf2b0856e784943181734d5b7f47637a0cb750aebd1fb3db581ba678837'
 EXE_HASH = '39a508c05b13afc5427f0b722fce5c4edeced126587e037d585cf0e70d279297'
 
@@ -265,14 +266,52 @@ def collection(s):
 
 
 def displayable(row):
-    """First-part character cards, including event and special appearances."""
-    return (row['種別'] == 0 and row['出现'] in (1, 3) and row['削除'] == 0
+    """Formal collection cards across both parts, including items and generics."""
+    return (row['種別'] in CARD_KINDS and row['出现'] in (1, 2, 3) and row['削除'] == 0
             and 1 <= row['所属'] <= 10 and not row['Id'].startswith('测试'))
 
 
 def eligible(row, chars, skills):
-    return (displayable(row) and row['识别名'] in chars
+    return (displayable(row)
             and all(row[n] == 0 or row[n] in skills for n in ['技能１', '技能２']))
+
+
+def initial_star(s):
+    bonus = fields(s, s['globals']['g_clearPointBonus'][1])
+    values = [fields(s, ref) for ref in flat(s, bonus['m_bonus'], 13)]
+    return min(200, sum(v['<Value>'] for v in values if v['<IsUse>'] and v['<Type>'] == 3))
+
+
+def card_star(s, row, chars):
+    if row['種別'] == 10:
+        common = fields(s, s['globals']['g_playerCommonParam'][1])
+        return common['<ItemStar>'] * (2 if common['m_itemStarUp'] else 1)
+    return chars[row['识别名']][1]['m_star'] if row['识别名'] in chars else initial_star(s)
+
+
+def ensure_character(s, name, chars, changed_arrays):
+    """Mirror addCharacter / CharacterCollection.Create used by native card addition."""
+    if name in chars:
+        return chars[name]
+    from training import next_exp
+    ident = addstr(s, name)
+    replay = addrecord(s, 'CharacterEventCollection', {
+        '<Id>': ident, 'm_key': addstr(s, '识别名情报.%s.事件' % name)})
+    food = addrecord(s, 'FoodTicketEvent', {
+        'm_id': ident, 'm_eventStage': 0, 'm_exBaseKey': addstr(s, '识别名情报.' + name)})
+    star = initial_star(s)
+    ref = addrecord(s, 'Character', {'m_id': ident, 'm_star': star, '<Exp>': 0,
+        '<NextExp>': next_exp(star), '<ReplayEvent>': replay, '<FoodTicketEvent>': food,
+        '<IsFinishAttack>': 0})
+    pool = fields(s, s['globals']['g_character'][1])['m_character']
+    refs = flat(s, pool, 13)
+    keys = [text(s, fields(s, r)['m_id']).encode('gbk') for r in refs]
+    require(keys == sorted(keys), '原角色列表排序异常。')
+    refs.insert(bisect.bisect_left(keys, name.encode('gbk')), ref)
+    resize(s, pool)
+    changed_arrays.add(pool)
+    chars[name] = (ref, fields(s, ref))
+    return chars[name]
 
 
 def inspect(path):
@@ -281,19 +320,24 @@ def inspect(path):
     meta = metadata(s)
     rootref, orgs, owned, chars, pending = collection(s)
     table, skills = catalog()
+    try:
+        item_info = json.loads(app_paths.ITEM_FILE.read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        item_info = {}
     rows = []
     for ident, row in table.items():
         if not displayable(row):
             continue
         skillrows = [skills.get(row[n], {}) for n in ['技能１', '技能２']]
         available = eligible(row, chars, skills)
-        star = chars[row['识别名']][1]['m_star'] if row['识别名'] in chars else '—'
+        star = card_star(s, row, chars)
         # PlayerCard.RareType uses SR=0 / 87 / other for Normal / Rare / UltraRare.
         rarity = '普通' if row['ＳＲ'] == 0 else ('特级' if row['ＳＲ'] == 87 else '超稀有')
-        reason = '' if available else ('当前存档没有这个角色的记录，暂不能安全添加。'
-                   if row['识别名'] not in chars else '当前技能记录尚未适配，暂不能添加。')
+        reason = '' if available else '当前技能记录尚未适配，暂不能添加。'
         rows.append(dict(id=ident, character=row['识别名'], org=row['所属'], faction=ORG_NAMES[row['所属']],
                          hp=row['ＨＰ'], atk=row['ＡＴＫ'], star=star, rarity=rarity, appearance=row['出现'],
+                         kind=CARD_KINDS[row['種別']], new_character=row['识别名'] not in chars,
+                         description='\n'.join(item_info.get(ident, [])),
                          nude=bool(row['裸']),
                          available=available, unavailable_reason=reason,
                          basic=bool(re.fullmatch(r'Lv\d+ ' + re.escape(row['识别名']), ident)),
@@ -358,7 +402,7 @@ def prepare(path, identifiers, expected_sha):
     require(sha(raw) == expected_sha, '这个存档已被游戏更新，请刷新并重新选择。没有覆盖。')
     original = parse(raw, str(path))
     require(metadata(original)['slot'] < 5000, '自动存档仅供查看。请先保存到一个手动存档位。')
-    require(0 < len(identifiers) <= 200 and len(set(identifiers)) == len(identifiers), '选择数量无效或重复。')
+    require(identifiers and len(set(identifiers)) == len(identifiers), '选择数量无效或重复。')
     s = copy.deepcopy(original)
     require(build_payload(s, original) == original['payload'], '原存档无修改重建校验失败。')
     rootref, orgs, owned, chars, pending = collection(s)
@@ -372,7 +416,7 @@ def prepare(path, identifiers, expected_sha):
         orgref = orgs[row['所属'] - 1]
         org = fields(s, orgref)
         cards = flat(s, org['m_card'], 13)
-        character_ref, character = chars[row['识别名']]
+        character_ref, character = ensure_character(s, row['识别名'], chars, changed_arrays)
         ident_index = addstr(s, ident)
         skillrefs = [addrecord(s, 'PlayerCardSkill', {'m_cardId': ident_index, '': -1,
                      '<Index>': idx, 'UsedCount': 0}) for idx in range(2)]
@@ -408,7 +452,7 @@ def prepare(path, identifiers, expected_sha):
                     s['kv'][ratio_idx] = max(s['kv'][ratio_idx], skill['数值' + suffix])
                     allowed_kv.add(ratio_idx)
         report.append(dict(card=ident, faction=ORG_NAMES[row['所属']], card_ref=newref,
-                           character_ref=character_ref, star=character['m_star'], skill_refs=skillrefs))
+                           character_ref=character_ref, star=card_star(s, row, chars), skill_refs=skillrefs))
         owned[ident] = (row['所属'], newref, 1)
     changed_kv = {i for i, (a, b) in enumerate(zip(original['kv'], s['kv'])) if a != b}
     require(changed_kv <= allowed_kv, '检测到预期外的字段变化。')
@@ -429,8 +473,9 @@ def prepare(path, identifiers, expected_sha):
     require(len(after) == before_count + len(identifiers), '添加后的卡牌总数不符合预期。')
     for item in report:
         require(after[item['card']][1] == item['card_ref'], '新卡引用校验失败。')
-        require(fields(check, item['character_ref']) == fields(original, item['character_ref']),
-                '角色培养或事件数据被改变。')
+        if item['character_ref'] < len(original['records']):
+            require(fields(check, item['character_ref']) == fields(original, item['character_ref']),
+                    '角色培养或事件数据被改变。')
         require(flat(check, fields(check, item['card_ref'])['m_skill'], 13) == item['skill_refs'],
                 '新卡技能引用无效。')
     return output, dict(source=str(path), original_sha256=sha(raw), modified_sha256=sha(output),
