@@ -158,7 +158,7 @@ class Cards(ttk.Frame):
             return
         self.gate.ready()
         def work():
-            engine.check_version()
+            engine.catalog()
             return engine.list_saves()
         self.owner.run(work, self.saves_loaded, '正在读取存档列表…', self.load_failed)
 

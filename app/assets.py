@@ -15,6 +15,7 @@ import zipfile
 from PIL import Image, ImageDraw, ImageFont
 import app_paths
 import game_profile as profile
+import save_compat
 
 
 def _sha(data):
@@ -74,22 +75,32 @@ def parse_table(text, name):
 
 
 def parse_catalog(text):
-    data = dict(cards=parse_table(text, '卡牌数据'), skills=parse_table(text, '技能数据'))
-    validate_catalog(data)
+    names = ('卡牌数据', '技能数据') if 'table 卡牌数据 = {' in text else ('カードデータ', 'スキルデータ')
+    aliases = {'識別名': '识别名', 'スキル１': '技能１', 'スキル２': '技能２', '発生': '出现',
+        '性別': '性别', '詳細ＣＧ': '详情ＣＧ', 'イベント種別': '事件種別', '大人子供': '成年人幼童',
+        '情報時カード表示': '情报時卡牌表示', '割り込みバトル倍率': '抢攻战斗增伤率', '必殺連撃効果': '必杀连击效果',
+        '名前': '名称', '行動タイプ': '行动类型', '確率': '概率', '発動条件': '发动条件', '大技': '大招', '説明': '说明'}
+    aliases.update({'効果' + n: '效果' + n for n in '１２３'})
+    aliases.update({'数値' + n: '数值' + n for n in '１２３'})
+    data = dict(schema=2, cards=[{aliases.get(k, k): v for k, v in row.items()} for row in parse_table(text, names[0])],
+                skills=[{aliases.get(k, k): v for k, v in row.items()} for row in parse_table(text, names[1])])
+    data['content_digest'] = profile.catalog_digest(data)
+    validate_catalog(data, verify_source=False)
     return data
 
 
 def parse_item_info(text):
-    start = text.find('tree 卡牌情报 = {')
+    root = '卡牌情报' if 'tree 卡牌情报 = {' in text else 'カード情報'
+    start = text.find('tree ' + root + ' = {')
     end = text.find('\n};', start)
     if start < 0 or end < 0:
-        raise ValueError('缺少卡牌说明。')
+        return {}
     result = {}
     for match in re.finditer(r'^\t("(?:[^"\\]|\\.)*"|[^\r\n=]+?) = \{\n(.*?)^\t\},', text[start:end], re.M | re.S):
         key = json.loads(match[1]) if match[1].startswith('"') else match[1]
         lines = []
         for number in '１２３４５６７８９':
-            value = re.search(r'^\s*(?:string )?说明' + number + r' = ("(?:[^"\\]|\\.)*"),?\s*$', match[2], re.M)
+            value = re.search(r'^\s*(?:string )?(?:说明|説明)' + number + r' = ("(?:[^"\\]|\\.)*"),?\s*$', match[2], re.M)
             if value:
                 lines.extend(line for line in json.loads(value[1]).splitlines() if line)
         if lines:
@@ -114,13 +125,42 @@ def draw_item_text(card, name, lines):
     draw.text((104, 283), name, anchor='mt', font=font, fill='#fff4d2', stroke_width=1, stroke_fill='#33210c')
 
 
-def validate_catalog(data):
+def validate_catalog(data, verify_source=True):
     try:
-        valid = len(data['cards']) == 1134 and len(data['skills']) == 1028 and profile.catalog_digest(data) == profile.CATALOG_DIGEST
+        if data.get('schema') != 2:
+            valid = len(data['cards']) == 1134 and len(data['skills']) == 1028 and profile.catalog_digest(data) == profile.CATALOG_DIGEST
+        else:
+            card_types = {name: str for name in ['Id', '识别名', 'ＣＧ名']}
+            card_types.update({name: int for name in ['所属', '種別', '出现', '削除', '裸', 'ＳＲ', 'ＨＰ', 'ＡＴＫ', '技能１', '技能２']})
+            skill_types = dict(Id=int, 名称=str, 说明=str, **{'ＡＰ': int})
+            skill_types.update({prefix + n: int for prefix in ['效果', '数值'] for n in '１２３'})
+            valid = data['content_digest'] == profile.catalog_digest(data)
+            for key, types in [('cards', card_types), ('skills', skill_types)]:
+                rows = data[key]
+                valid = valid and isinstance(rows, list) and bool(rows) and len({row['Id'] for row in rows}) == len(rows)
+                valid = valid and all(all(type(row.get(name)) is kind for name, kind in types.items()) for row in rows)
     except (KeyError, TypeError, ValueError):
         valid = False
     if not valid:
-        raise ValueError('卡牌数据与已验证版本不一致，请重新准备图鉴。')
+        raise ValueError('卡牌或技能数据结构不完整，请从当前游戏重新准备图鉴。')
+    if verify_source:
+        save_compat.verify_source(data)
+
+
+def dump_game_ex(tool, game, folder):
+    """Detect the data language by table names, not by guessing the translation group."""
+    errors = []
+    for encoding in ['CP936', 'CP932']:
+        dump = Path(folder) / 'catalog.x'
+        try:
+            _run(tool, ['ex', 'dump', '--input-encoding', encoding, '--output-encoding', 'UTF-8',
+                        '-o', dump, Path(game) / 'Rance10EX.ex'])
+            text = dump.read_text(encoding='utf-8')
+            if 'table 卡牌数据 = {' in text or 'table カードデータ = {' in text:
+                return text, encoding
+        except ValueError as exc:
+            errors.append(str(exc))
+    raise ValueError('未识别出中文或日文卡牌表。' + (errors[-1] if errors else '请提供兼容信息以便适配。'))
 
 
 def ensure_component(local_path='', allow_download=False, progress=lambda message: None):
@@ -239,20 +279,29 @@ def library_status():
 def prepare_library(game, local_tool='', allow_download=False, progress=lambda message: None):
     import engine
     game = Path(game)
-    engine.validate_game(game)
+    engine.validate_game_directory(game)
     tool = ensure_component(local_tool, allow_download, progress)
-    encoding = ['--input-encoding', 'CP936', '--output-encoding', 'UTF-8']
     app_paths.initialize()
     with tempfile.TemporaryDirectory(prefix='prepare-', dir=app_paths.CACHE_DIR) as work:
         work = Path(work)
-        dump = work / 'catalog.x'
         progress('正在读取游戏中的卡牌和技能数据…')
-        _run(tool, ['ex', 'dump'] + encoding + ['-o', dump, game / 'Rance10EX.ex'])
-        source_text = dump.read_text(encoding='utf-8')
+        ex_hash = save_compat.file_hash(game / 'Rance10EX.ex')
+        source_text, input_encoding = dump_game_ex(tool, game, work)
+        encoding = ['--input-encoding', input_encoding, '--output-encoding', 'UTF-8']
         data = parse_catalog(source_text)
+        data['source'] = dict(ex_sha256=ex_hash, encoding=input_encoding)
+        data['rules'] = save_compat.inspect_rules(game, tool, input_encoding, progress)
         item_info = parse_item_info(source_text)
         import character_data
-        character_info = character_data.parse(source_text)
+        warning = ''
+        try:
+            character_info = character_data.parse(source_text, data['source'])
+            data['character_root'] = character_info['character_root']
+            data['event_leaf'] = '事件' if input_encoding == 'CP936' else 'イベント'
+        except ValueError as exc:
+            character_info = None
+            data['rules']['groups']['characters'] = False
+            warning = '人物资料未准备：' + str(exc)
         assets = {}
         archives = []
         for path in game.glob('Rance10CG*.afa'):
@@ -271,7 +320,8 @@ def prepare_library(game, local_tool='', allow_download=False, progress=lambda m
         for row in data['cards']:
             if not engine.displayable(row):
                 continue
-            prefix = '卡牌／物品／' if row['種別'] == 10 else '卡牌／'
+            base = '卡牌' if input_encoding == 'CP936' else 'カード'
+            prefix = base + ('／物品／' if row['種別'] == 10 else '／')
             name = next((name for ext in ['.ajp', '.qnt', '.dcf', '.webp', '.png']
                          if (name := prefix + row['ＣＧ名'] + ext) in assets), None)
             if not name:
@@ -279,7 +329,13 @@ def prepare_library(game, local_tool='', allow_download=False, progress=lambda m
                 continue
             entries[row['Id']] = dict(asset=name, cg=row['ＣＧ名'], faction=engine.ORG_NAMES[row['所属']],
                 item=row['種別'] == 10, name=row['Id'], description=item_info.get(row['Id'], []))
-        cached = cached_images()
+        try:
+            old = json.loads(app_paths.CATALOG_FILE.read_text(encoding='utf-8'))
+            old_source = old.get('source', {}).get('ex_sha256',
+                profile.GAME_HASHES['Rance10EX.ex'] if profile.catalog_digest(old) == profile.CATALOG_DIGEST else '')
+        except (OSError, ValueError, KeyError, TypeError):
+            old_source = ''
+        cached = cached_images() if old_source == data['source']['ex_sha256'] else {}
         reused = {ident: cached[ident] for ident, row in entries.items()
                   if ident in cached and cached[ident].get('cg') == row['cg']
                   and cached[ident].get('source') == row['asset']
@@ -290,8 +346,11 @@ def prepare_library(game, local_tool='', allow_download=False, progress=lambda m
         needed = {row['asset'] for row in pending.values()}
         frames = {}
         for faction, item in {(row['faction'], row['item']) for row in pending.values()}:
-            resource = 'ＪＡＰＡＮ' if faction == 'JAPAN' else faction
-            names = ['シス／卡牌／%s／%s所属%s.ajp' % (part, resource, '／物品' if item else '') for part in ['下地', '枠']]
+            jp_factions = dict(zip(engine.ORG_NAMES[1:], ['主人公', 'リーザス', 'ヘルマン', 'ゼス', '自由都市',
+                'ＪＡＰＡＮ', 'その他', '亜人', 'モンスター', '神魔']))
+            resource = jp_factions[faction] if input_encoding == 'CP932' else ('ＪＡＰＡＮ' if faction == 'JAPAN' else faction)
+            base = '卡牌' if input_encoding == 'CP936' else 'カード'
+            names = ['シス／%s／%s／%s所属%s.ajp' % (base, part, resource, '／物品' if item else '') for part in ['下地', '枠']]
             if all(name in assets for name in names):
                 frames[(faction, item)] = names
                 needed.update(names)
@@ -335,11 +394,16 @@ def prepare_library(game, local_tool='', allow_download=False, progress=lambda m
                     manifest[ident]['item_layout'] = 1
                     manifest[ident]['description'] = row['description']
         # Install only after generation and data validation succeed.
+        engine.require(ex_hash == save_compat.file_hash(game / 'Rance10EX.ex')
+            and data['rules']['ain_sha256'] == save_compat.file_hash(game / 'Rance10.ain'),
+            '游戏数据刚刚发生变化，请重新准备图鉴。')
         for path, value in [(app_paths.CATALOG_FILE, data), (app_paths.ITEM_FILE, item_info),
                             (app_paths.IMAGE_DIR / 'manifest.json', manifest)]:
             temp = path.with_name(path.name + '.' + uuid.uuid4().hex + '.tmp')
             temp.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding='utf-8')
             temp.replace(path)
-        character_data.store(character_info)
+        if character_info is not None:
+            character_data.store(character_info)
         return dict(cards=len(manifest), missing_images=len(missing),
-                    generated=len(pending), reused=len(reused))
+                    generated=len(pending), reused=len(reused), warning=warning,
+                    card_writes=data['rules']['groups']['cards'])

@@ -68,7 +68,7 @@ class App(tk.Tk):
         self.page_hint = tk.Label(heading, text='游戏运行时修改，点击后即时生效', font=(FONT, 10),
                                  bg=SURFACE, fg=MUTED, anchor='w')
         self.page_hint.pack(fill='x', pady=(5, 0))
-        self.connection = tk.Label(header, text='●  等待连接游戏', font=(FONT, 9),
+        self.connection = tk.Label(header, text='●  等待实时连接', font=(FONT, 9),
                                    bg='#edf2f7', fg=MUTED, padx=14, pady=9)
         self.connection.pack(side='right', padx=(12, 0))
         tk.Frame(workspace, bg=LINE, height=1).pack(fill='x')
@@ -107,7 +107,7 @@ class App(tk.Tk):
         self.theme = configure_styles(self)
 
     def set_connection(self, connected):
-        self.connection.configure(text='●  游戏已连接' if connected else '●  游戏未连接',
+        self.connection.configure(text='●  实时修改已连接' if connected else '●  实时修改未连接',
                                   fg=GREEN if connected else RED,
                                   bg='#e9f6f0' if connected else '#fceef0')
 

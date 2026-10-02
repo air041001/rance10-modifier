@@ -7,6 +7,8 @@ import assets
 import engine
 import runtime
 import settings
+import json
+import save_compat
 from ui_theme import FONT, GREEN, RED, BG, surface, ScrollBody
 
 
@@ -46,7 +48,10 @@ class Setup(ttk.Frame):
         self.detect_button = ttk.Button(row, text='识别正在运行的游戏', command=self.detect)
         self.detect_button.pack(side='left', padx=10)
         self.controls += [self.save_button, self.detect_button]
-        self.feedback = ttk.Label(paths, text='游戏版本按文件内容核对，尚未适配的版本会停止修改。',
+        self.compat_button = ttk.Button(row, text='复制兼容信息', command=self.copy_compatibility)
+        self.compat_button.pack(side='left')
+        self.controls.append(self.compat_button)
+        self.feedback = ttk.Label(paths, text='卡牌功能按本机卡表、存档结构和加卡规则检查。实时餐券与点数单独检查游戏版本。',
                                   style='SurfaceHint.TLabel', wraplength=850)
         self.feedback.pack(anchor='w', fill='x', pady=(12, 0))
 
@@ -101,6 +106,10 @@ class Setup(ttk.Frame):
         text = '图鉴已准备：%d 张卡面（本次补齐 %d 张，复用 %d 张）。' % (report['cards'], report['generated'], report['reused'])
         if report['missing_images']:
             text += ' %d 张缺少图片，可用名称与技能查看。' % report['missing_images']
+        if report.get('warning'):
+            text += '\n' + report['warning']
+        if report.get('card_writes') is False:
+            text += '\n当前游戏的加卡规则有变化；图鉴可查看，加卡需要适配。'
         self.library_status.configure(text=text, foreground=GREEN)
         self.owner.status.configure(text=text, foreground=GREEN)
         self.owner.tab_changed()
@@ -162,7 +171,7 @@ class Setup(ttk.Frame):
         def work():
             if not game:
                 raise ValueError('请选择游戏目录。')
-            engine.validate_game(game)
+            engine.validate_game_directory(game)
             if not Path(saves).is_dir():
                 raise ValueError('没有找到存档目录。请先在游戏中保存一次，或手动选择正确目录。')
             return game, saves, component
@@ -174,9 +183,9 @@ class Setup(ttk.Frame):
             self.owner.cards.invalidate()
             self.owner.training.invalidate()
             self.owner.numbers.current = None
-            self.feedback.configure(text='游戏版本检查通过，目录设置已保存。', foreground=GREEN)
+            self.feedback.configure(text='目录已保存。请准备本机图鉴；实时修改的适配状态会单独显示。', foreground=GREEN)
             self.owner.numbers.refresh()
-        self.owner.run(work, done, '正在检查游戏版本与目录…', self.failed)
+        self.owner.run(work, done, '正在检查游戏与存档目录…', self.failed)
 
     def detect(self):
         def done(processes):
@@ -186,6 +195,14 @@ class Setup(ttk.Frame):
             self.game.set(str(Path(processes[0]['path']).parent))
             self.save_paths()
         self.owner.run(runtime.discover, done, '正在查找已运行的游戏…', self.failed)
+
+    def copy_compatibility(self):
+        game = self.game.get().strip()
+        def done(info):
+            self.clipboard_clear()
+            self.clipboard_append(json.dumps(info, ensure_ascii=False, indent=2))
+            self.feedback.configure(text='兼容信息已复制，可粘贴到反馈中。内容不含存档、个人路径或游戏文本。', foreground=GREEN)
+        self.owner.run(lambda: save_compat.report(game), done, '正在读取兼容信息…', self.failed)
 
     def failed(self, message):
         self.feedback.configure(text=message, foreground=RED)

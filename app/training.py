@@ -6,6 +6,7 @@ import zlib
 from pathlib import Path
 import engine
 import character_data
+import save_compat
 
 
 def f32(value):
@@ -24,6 +25,7 @@ def next_exp(star):
 def inspect(path):
     context = engine.inspect(path)
     s = engine.parse(Path(path).read_bytes(), str(path))
+    save_compat.validate_save(s, scope='training')
     engine.require(engine.sha(s['raw']) == context['sha'], '存档刚刚更新，请重新刷新。')
     _, _, owned, chars, pending = engine.collection(s)
     data = character_data.load()
@@ -44,7 +46,7 @@ def inspect(path):
                          overridden=values['m_dummyStar'] >= 0 or values['m_tempStar'] >= 0,
                          story=info))
     context['training_cards'] = sorted(rows, key=lambda r: (r['faction'], r['character'], r['id']))
-    context['star_cap'], context['enhancement_cap'] = data['star_cap'], data['enhancement_cap']
+    context['star_cap'], context['enhancement_cap'] = min(200, data['star_cap']), min(10, data['enhancement_cap'])
     return context
 
 
@@ -57,11 +59,13 @@ def prepare(path, kind, target, value, expected_sha):
     meta = engine.metadata(original)
     engine.require(meta['slot'] < 5000, '自动存档仅供查看，请选择手动存档。')
     s = copy.deepcopy(original)
+    save_compat.validate_save(s, scope=kind)
     engine.require(engine.build_payload(s, original) == original['payload'], '原档重建校验失败。')
     _, orgs, owned, chars, pending = engine.collection(s)
     engine.require(not pending, '请先处理宝箱选卡并重新保存，再修改培养。')
     table, _ = engine.catalog()
     limits = character_data.load()
+    save_compat.require_rule(engine.catalog_data(), kind)
     allowed, affected = set(), []
 
     def set_value(ref, name, val):
@@ -74,7 +78,7 @@ def prepare(path, kind, target, value, expected_sha):
                        and table[ident]['種別'] == 0 for ident in owned), '请选择已经持有的人物。')
         ref, character = chars[target]
         before = character['m_star']
-        engine.require(before < value <= limits['star_cap'], '★等级只能提高，最高%d。' % limits['star_cap'])
+        engine.require(before < value <= min(200, limits['star_cap']), '★等级只能提高，最高%d。' % min(200, limits['star_cap']))
         engine.require(character['<NextExp>'] == next_exp(before), '人物经验门槛与已验证规则不一致，没有修改。')
         set_value(ref, 'm_star', value)
         set_value(ref, '<Exp>', 0)
@@ -85,7 +89,7 @@ def prepare(path, kind, target, value, expected_sha):
         engine.require(target in owned and table.get(target, {}).get('種別') == 0, '请选择持有的人物卡牌。')
         _, ref, count = owned[target]
         before = count - 1
-        engine.require(before < value <= limits['enhancement_cap'], '强化只能提高，最高+%d。' % limits['enhancement_cap'])
+        engine.require(before < value <= min(10, limits['enhancement_cap']), '强化只能提高，最高+%d。' % min(10, limits['enhancement_cap']))
         set_value(ref, 'm_count', value + 1)
         affected = [target]
     for ident in affected:
@@ -117,7 +121,6 @@ def prepare(path, kind, target, value, expected_sha):
 
 
 def apply(path, kind, target, value, expected_sha, backup_dir=None):
-    engine.check_version()
     # Check the configured destination before even preparing an edit.
     engine.require(Path(path).resolve().parent == engine.settings.save_dir().resolve(),
                    '存档目录已经改变，请刷新目标存档。')

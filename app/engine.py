@@ -14,6 +14,7 @@ import zlib
 import app_paths
 import settings
 from game_profile import GAME_HASHES
+import save_compat
 
 BASE = app_paths.RESOURCE_DIR
 SAVE_DIR = settings.save_dir()
@@ -44,8 +45,8 @@ def pack(*vals):
 
 
 class Reader:
-    def __init__(self, data, pos=0):
-        self.b, self.p = data, pos
+    def __init__(self, data, pos=0, encoding='gbk'):
+        self.b, self.p, self.encoding = data, pos, encoding
 
     def i(self):
         result = struct.unpack_from('<i', self.b, self.p)[0]
@@ -54,22 +55,23 @@ class Reader:
 
     def text(self):
         end = self.b.index(0, self.p)
-        result = self.b[self.p:end].decode('gbk', errors='replace')
+        result = self.b[self.p:end].decode(self.encoding, errors='strict')
         self.p = end + 1
         return result
 
 
-def parse(raw, filename=''):
+def parse(raw, filename='', encoding=None):
+    encoding = encoding or save_compat.encoding()
     require(raw[:4] == b'GD\x01\x01', '不是受支持的兰斯10存档。')
     size = struct.unpack_from('<i', raw, 4)[0]
     require(0 < size < 32 * 1024 * 1024, '存档长度异常。')
     dec = zlib.decompressobj()
     data = dec.decompress(raw[8:], size + 1)
     require(dec.eof and len(data) == size and not dec.unused_data, '存档压缩数据不完整。')
-    r = Reader(data)
+    r = Reader(data, encoding=encoding)
     key = r.text()
     h = [r.i() for _ in range(14)]
-    require(key == 'rance10' and h[1] == 8 and h[2] == 64, '当前仅支持本机已验证的v8存档。')
+    require(key == 'rance10' and h[1] == 8 and h[2] == 64, '当前仅支持兰斯10的v8格式存档。')
     require(64 < h[4] <= h[6] <= h[8] <= h[10] <= h[12] <= size, '存档目录无效。')
     require(all(0 <= h[i] < 1000000 for i in [5, 7, 9, 11, 13]), '存档计数无效。')
     r.p = h[4]
@@ -82,6 +84,7 @@ def parse(raw, filename=''):
     globals_ = {}
     for _ in range(h[7]):
         typ, value, name = r.i(), r.i(), r.text()
+        require(not name or name not in globals_, '存档全局字段名重复：' + name)
         globals_[name] = (typ, value)
     require(r.p == h[8], '全局数据区长度错误。')
     strings = [r.text() for _ in range(h[9])]
@@ -108,7 +111,7 @@ def parse(raw, filename=''):
         defs.append({'name': name, 'fields': members})
     result = dict(file=filename, raw=raw, payload=data, header=h, records=records,
                   globals=globals_, strings=strings, arrays=arrays, kv=kv, defs=defs,
-                  defs_end=r.p, extra_strings=[])
+                  defs_end=r.p, extra_strings=[], encoding=encoding)
     metadata(result)
     return result
 
@@ -120,7 +123,7 @@ def metadata(s):
     length = struct.unpack_from('<I', b, pos)[0]
     require(pos + 4 + length == len(b), '存档说明长度无效。')
     raw = b[pos + 4:]
-    pieces = raw.decode('gbk', errors='replace').split('|', 6)
+    pieces = raw.decode(s['encoding'], errors='strict').split('|', 6)
     require(len(pieces) == 7 and pieces[0].isdigit(), '存档位说明无效。')
     name = Path(s['file']).name
     match = re.fullmatch(r'LocalSave(\d+)\.asd', name)
@@ -135,10 +138,13 @@ def fields(s, ref):
     require(0 <= rec['sid'] < len(s['defs']), '卡牌结构引用无效。')
     names = s['defs'][rec['sid']]['fields']
     require(len(names) == len(rec['kv']), '卡牌字段数量不一致。')
+    require(len({name for _, name in names if name}) == sum(bool(name) for _, name in names), '记录字段名重复。')
+    require(all(0 <= idx < len(s['kv']) for idx in rec['kv']), '记录字段索引越界。')
     return {name: s['kv'][idx] for (_, name), idx in zip(names, rec['kv'])}
 
 
 def field_index(s, ref, name):
+    fields(s, ref)
     rec = s['records'][ref]
     pos = [i for i, (_, n) in enumerate(s['defs'][rec['sid']]['fields']) if n == name]
     require(len(pos) == 1, '字段不唯一：' + name)
@@ -167,13 +173,14 @@ def addstr(s, value):
     if value in s['strings']:
         return s['strings'].index(value)
     s['strings'].append(value)
-    s['extra_strings'].append(value.encode('gbk') + b'\0')
+    s['extra_strings'].append(value.encode(s['encoding']) + b'\0')
     return len(s['strings']) - 1
 
 
 def addrecord(s, name, values):
     ids = [i for i, d in enumerate(s['defs']) if d['name'] == name]
     require(len(ids) == 1, '未找到唯一的结构：' + name)
+    save_compat.validate_save(s, exact=[name])
     require([n for _, n in s['defs'][ids[0]]['fields']] == list(values), '结构字段不匹配：' + name)
     indices = []
     for value in values.values():
@@ -214,11 +221,16 @@ def build_payload(s, original):
     return bytes(out)
 
 
-def catalog():
+def catalog_data():
     from assets import validate_catalog
     require(app_paths.CATALOG_FILE.is_file(), '请先在“设置”中准备卡牌图鉴。')
     data = json.loads(app_paths.CATALOG_FILE.read_text(encoding='utf-8'))
     validate_catalog(data)
+    return data
+
+
+def catalog():
+    data = catalog_data()
     return {r['Id']: r for r in data['cards']}, {r['Id']: r for r in data['skills']}
 
 
@@ -235,7 +247,22 @@ def validate_game(game):
     return game
 
 
+def validate_game_directory(game):
+    game = Path(game)
+    for name in GAME_HASHES:
+        require((game / name).is_file(), '所选目录缺少 ' + name + '，请选择游戏程序所在文件夹。')
+    return game
+
+
+def check_live_version():
+    game = validate_game_directory(settings.game_dir())
+    for name in ['Rance10.exe', 'Rance10.ain']:
+        require(save_compat.file_hash(game / name) == GAME_HASHES[name],
+                '实时修改尚未适配此游戏版本（' + name + '）。卡牌功能按本机数据单独检查。')
+
+
 def collection(s):
+    save_compat.validate_save(s)
     rootref = s['globals']['g_playerCard'][1]
     root = fields(s, rootref)
     orgs = flat(s, root['m_org'], 13)
@@ -249,7 +276,7 @@ def collection(s):
             ident = text(s, v['<Id>'])
             require(ident not in owned, '存档包含重复卡牌记录，请先核对。')
             owned[ident] = (org_id, c, v['m_count'])
-            ids.append(ident.encode('gbk'))
+            ids.append(ident.encode(s['encoding']))
         require(ids == sorted(ids), '原存档卡牌列表排序异常。')
     characters = {}
     for i, r in enumerate(s['records']):
@@ -268,7 +295,7 @@ def collection(s):
 def displayable(row):
     """Formal collection cards across both parts, including items and generics."""
     return (row['種別'] in CARD_KINDS and row['出现'] in (1, 2, 3) and row['削除'] == 0
-            and 1 <= row['所属'] <= 10 and not row['Id'].startswith('测试'))
+            and 1 <= row['所属'] <= 10 and not row['Id'].startswith(('测试', 'テスト')))
 
 
 def eligible(row, chars, skills):
@@ -276,10 +303,10 @@ def eligible(row, chars, skills):
             and all(row[n] == 0 or row[n] in skills for n in ['技能１', '技能２']))
 
 
-def initial_star(s):
+def initial_star(s, cap=200):
     bonus = fields(s, s['globals']['g_clearPointBonus'][1])
     values = [fields(s, ref) for ref in flat(s, bonus['m_bonus'], 13)]
-    return min(200, sum(v['<Value>'] for v in values if v['<IsUse>'] and v['<Type>'] == 3))
+    return min(cap, sum(v['<Value>'] for v in values if v['<IsUse>'] and v['<Type>'] == 3))
 
 
 def card_star(s, row, chars):
@@ -289,25 +316,31 @@ def card_star(s, row, chars):
     return chars[row['识别名']][1]['m_star'] if row['识别名'] in chars else initial_star(s)
 
 
-def ensure_character(s, name, chars, changed_arrays):
+def ensure_character(s, name, chars, changed_arrays, data):
     """Mirror addCharacter / CharacterCollection.Create used by native card addition."""
     if name in chars:
         return chars[name]
+    save_compat.require_rule(data, 'characters')
+    save_compat.validate_save(s, scope='character_write')
+    import character_data
+    info = character_data.load()
+    root = info.get('character_root', '识别名情报')
+    leaf = '事件' if root == '识别名情报' else 'イベント'
     from training import next_exp
     ident = addstr(s, name)
     replay = addrecord(s, 'CharacterEventCollection', {
-        '<Id>': ident, 'm_key': addstr(s, '识别名情报.%s.事件' % name)})
+        '<Id>': ident, 'm_key': addstr(s, root + '.' + name + '.' + leaf)})
     food = addrecord(s, 'FoodTicketEvent', {
-        'm_id': ident, 'm_eventStage': 0, 'm_exBaseKey': addstr(s, '识别名情报.' + name)})
-    star = initial_star(s)
+        'm_id': ident, 'm_eventStage': 0, 'm_exBaseKey': addstr(s, root + '.' + name)})
+    star = initial_star(s, min(200, info['star_cap']))
     ref = addrecord(s, 'Character', {'m_id': ident, 'm_star': star, '<Exp>': 0,
         '<NextExp>': next_exp(star), '<ReplayEvent>': replay, '<FoodTicketEvent>': food,
         '<IsFinishAttack>': 0})
     pool = fields(s, s['globals']['g_character'][1])['m_character']
     refs = flat(s, pool, 13)
-    keys = [text(s, fields(s, r)['m_id']).encode('gbk') for r in refs]
+    keys = [text(s, fields(s, r)['m_id']).encode(s['encoding']) for r in refs]
     require(keys == sorted(keys), '原角色列表排序异常。')
-    refs.insert(bisect.bisect_left(keys, name.encode('gbk')), ref)
+    refs.insert(bisect.bisect_left(keys, name.encode(s['encoding'])), ref)
     resize(s, pool)
     changed_arrays.add(pool)
     chars[name] = (ref, fields(s, ref))
@@ -317,9 +350,22 @@ def ensure_character(s, name, chars, changed_arrays):
 def inspect(path):
     path = Path(path)
     s = parse(path.read_bytes(), str(path))
+    save_compat.validate_save(s, scope='cards')
     meta = metadata(s)
     rootref, orgs, owned, chars, pending = collection(s)
     table, skills = catalog()
+    require(set(owned).issubset(table), '存档中有卡牌不在当前游戏卡表内，请核对游戏与存档目录，或重新准备图鉴。')
+    data = catalog_data()
+    try:
+        groups = save_compat.rules(data)
+        rule_error = ''
+    except ValueError as exc:
+        groups, rule_error = {}, str(exc)
+    try:
+        import character_data
+        character_info = character_data.load()
+    except ValueError:
+        character_info = None
     try:
         item_info = json.loads(app_paths.ITEM_FILE.read_text(encoding='utf-8'))
     except (OSError, ValueError):
@@ -329,11 +375,15 @@ def inspect(path):
         if not displayable(row):
             continue
         skillrows = [skills.get(row[n], {}) for n in ['技能１', '技能２']]
-        available = eligible(row, chars, skills)
+        available = eligible(row, chars, skills) and groups.get('cards', False)
+        new_character = row['识别名'] not in chars
+        if new_character:
+            available = available and groups.get('characters', False) and character_info is not None
         star = card_star(s, row, chars)
         # PlayerCard.RareType uses SR=0 / 87 / other for Normal / Rare / UltraRare.
         rarity = '普通' if row['ＳＲ'] == 0 else ('特级' if row['ＳＲ'] == 87 else '超稀有')
-        reason = '' if available else '当前技能记录尚未适配，暂不能添加。'
+        reason = '' if available else (rule_error or ('创建新人物需要更新本机人物资料。' if new_character and character_info is None
+            else '当前卡牌的技能或初始化规则尚未适配，可查看图鉴。'))
         rows.append(dict(id=ident, character=row['识别名'], org=row['所属'], faction=ORG_NAMES[row['所属']],
                          hp=row['ＨＰ'], atk=row['ＡＴＫ'], star=star, rarity=rarity, appearance=row['出现'],
                          kind=CARD_KINDS[row['種別']], new_character=row['识别名'] not in chars,
@@ -407,7 +457,12 @@ def prepare(path, identifiers, expected_sha):
     require(build_payload(s, original) == original['payload'], '原存档无修改重建校验失败。')
     rootref, orgs, owned, chars, pending = collection(s)
     require(not pending, '当前存档仍有未处理卡牌，请完成宝箱选卡并重新保存后使用。')
-    table, skills = catalog()
+    data = catalog_data()
+    save_compat.require_rule(data, 'cards')
+    save_compat.validate_save(s, exact=['PlayerCard', 'PlayerCardSkill'], scope='cards')
+    save_compat.validate_save(s, scope='card_write')
+    table, skills = {r['Id']: r for r in data['cards']}, {r['Id']: r for r in data['skills']}
+    require(set(owned).issubset(table), '存档与本机卡表不匹配，请核对游戏与存档目录。')
     report, changed_arrays, allowed_kv = [], set(), set()
     for ident in identifiers:
         require(ident in table and eligible(table[ident], chars, skills), '当前不支持这张卡：' + ident)
@@ -416,7 +471,7 @@ def prepare(path, identifiers, expected_sha):
         orgref = orgs[row['所属'] - 1]
         org = fields(s, orgref)
         cards = flat(s, org['m_card'], 13)
-        character_ref, character = ensure_character(s, row['识别名'], chars, changed_arrays)
+        character_ref, character = ensure_character(s, row['识别名'], chars, changed_arrays, data)
         ident_index = addstr(s, ident)
         skillrefs = [addrecord(s, 'PlayerCardSkill', {'m_cardId': ident_index, '': -1,
                      '<Index>': idx, 'UsedCount': 0}) for idx in range(2)]
@@ -429,14 +484,14 @@ def prepare(path, identifiers, expected_sha):
                           'm_lastCount': -1, 'm_dummyStar': -1, 'm_tempStar': -1, 'm_count': 1,
                           'm_skill': skillarray, '': 0, '<Id>': ident_index, 'Index': next_index,
                           'SortedIndex': 0, 'UniqueId': unique})
-        encoded = [text(s, fields(s, r)['<Id>']).encode('gbk') for r in cards]
-        cards.insert(bisect.bisect_left(encoded, ident.encode('gbk')), newref)
+        encoded = [text(s, fields(s, r)['<Id>']).encode(s['encoding']) for r in cards]
+        cards.insert(bisect.bisect_left(encoded, ident.encode(s['encoding'])), newref)
         resize(s, org['m_card'])
         changed_arrays.add(org['m_card'])
         charids = flat(s, org['m_characterId'], 12)
         if row['识别名'] not in [text(s, x) for x in charids]:
             charids.append(character['m_id'])
-        charids.sort(key=lambda x: text(s, x).encode('gbk'))
+        charids.sort(key=lambda x: text(s, x).encode(s['encoding']))
         resize(s, org['m_characterId'])
         changed_arrays.add(org['m_characterId'])
         for name, value in [('m_uniqueId', unique), ('m_isChanged', 1)]:
@@ -478,13 +533,13 @@ def prepare(path, identifiers, expected_sha):
                     '角色培养或事件数据被改变。')
         require(flat(check, fields(check, item['card_ref'])['m_skill'], 13) == item['skill_refs'],
                 '新卡技能引用无效。')
+    save_compat.verify_source(data)
     return output, dict(source=str(path), original_sha256=sha(raw), modified_sha256=sha(output),
                         before_count=before_count, after_count=len(after), cards=report,
                         metadata_valid=True, checked=True, installed=False)
 
 
 def apply(path, identifiers, expected_sha, backup_dir=None):
-    check_version()
     require(Path(path).resolve().parent == settings.save_dir().resolve(), '存档目录已经改变，请刷新目标存档。')
     output, report = prepare(path, identifiers, expected_sha)
     return install(path, expected_sha, output, report, '卡牌扩充', backup_dir)

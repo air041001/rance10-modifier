@@ -47,7 +47,7 @@ def run():
     app.tabs.select(app.setup)
     app.update()
     setup_controls = []
-    for button in [app.setup.local_button, app.setup.download_button, app.setup.character_button, app.setup.data_button]:
+    for button in [app.setup.compat_button, app.setup.local_button, app.setup.download_button, app.setup.character_button, app.setup.data_button]:
         app.setup.scroll.see(button)
         app.update()
         canvas = app.setup.scroll.canvas
