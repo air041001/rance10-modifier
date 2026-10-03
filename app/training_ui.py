@@ -102,7 +102,7 @@ class Training(ttk.Frame):
         ttk.Label(detail, text='餐券小故事 · 进度与条件', style='CardTitle.TLabel').pack(anchor='w')
         self.story_text = ttk.Label(detail, text='选择人物后查看。', style='Surface.TLabel', justify='left', wraplength=530)
         self.story_text.pack(fill='x', pady=(10, 8))
-        ttk.Label(detail, text='指定时会重新读取运行中的持有人物和故事进度。游戏按下一段剧情条件决定是否出现。',
+        ttk.Label(detail, text='先在游戏中读档，再点“读取当前游戏”并指定人物。再次读档后需要重新指定。',
                   style='SurfaceHint.TLabel', wraplength=530).pack(anchor='w')
         row = ttk.Frame(detail, style='Surface.TFrame')
         row.pack(fill='x', pady=(0, 10))
@@ -115,7 +115,7 @@ class Training(ttk.Frame):
         self.food_status.pack(anchor='w', pady=(0, 8))
         ttk.Label(detail, text='请在战斗结束前指定；已生成的候选不会即时替换。指定期间只出现这个人物。'
                   '没有符合条件的下一段故事时仍不会出现。取消、换档或关闭工具后恢复随机；地图餐券不受影响。'
-                  '此功能正在游戏验证中，暂只适配已验证的中文版。',
+                  '更换游戏目录后，请先准备该游戏的人物资料。',
                   style='SurfaceHint.TLabel', wraplength=530).pack(anchor='w')
         self.detail_scroll.bind_children()
         self.detail_scroll.body.bind('<Configure>', self.wrap_detail, add='+')

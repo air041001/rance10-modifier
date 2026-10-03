@@ -4,14 +4,27 @@ using System.Diagnostics;
 using System.Linq;
 using System.Reflection;
 
-internal static class RuntimeSettings { internal static string GameDirectory; }
+internal static class RuntimeSettings { internal static string GameDirectory,ProfilePath; }
+internal sealed class FoodProfile {
+    internal uint Offset=0x449b38,GuardStart=0x449b10,GuardEnd=0x44a2f0;
+    internal int Length=368,FirstLength=114,SecondOffset=256;
+    internal string SpanHash="unused";
+}
+internal sealed class RuntimeProfile {
+    internal FoodProfile Food=new FoodProfile(); internal string FoodError;
+    internal int CodeLength=14572638,CodePage=936,CharacterGlobal=257,CardGlobal=259;
+    internal Dictionary<string,int> Counts=new Dictionary<string,int>();
+    internal int[] Normalize(string name,int[] values){return values;}
+}
 internal sealed class GlobalsPage { internal uint Owner=0x20000, Data=0x30000, Context=0x40000; }
 internal sealed class LiveObject { internal GlobalsPage Globals; }
 internal sealed class Connection : IDisposable {
     internal Process Process=Process.GetCurrentProcess(); internal IntPtr Handle=(IntPtr)1;
     internal uint ModuleBase=0x400000, Marker=0x7945d8; internal long Session=1;
+    internal RuntimeProfile Profile=new RuntimeProfile();
+    internal Dictionary<string,uint> Types=new Dictionary<string,uint>{{"Stack",0x7987e4}};
     internal Dictionary<uint,byte[]> Memory=new Dictionary<uint,byte[]>();
-    internal Connection(bool write) { }
+    internal Connection(bool write, bool includeFood=false) { }
     internal byte[] Read(uint address,int size) {
         if(size==0)return new byte[0];
         foreach(var part in Memory)if(address>=part.Key && address+(uint)size<=part.Key+part.Value.Length)

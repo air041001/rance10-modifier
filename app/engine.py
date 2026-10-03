@@ -21,8 +21,6 @@ SAVE_DIR = settings.save_dir()
 BACKUP_DIR = settings.backup_dir()
 ORG_NAMES = ['', '主人公', '利萨斯', '赫尔曼', '赛斯', '自由都市', 'JAPAN', '其他', '亚人', '怪物', '神魔']
 CARD_KINDS = {0: '人物', 5: '通用', 10: '物品'}
-EX_HASH = 'd340aaf2b0856e784943181734d5b7f47637a0cb750aebd1fb3db581ba678837'
-EXE_HASH = '39a508c05b13afc5427f0b722fce5c4edeced126587e037d585cf0e70d279297'
 
 
 def configure():
@@ -234,19 +232,6 @@ def catalog():
     return {r['Id']: r for r in data['cards']}, {r['Id']: r for r in data['skills']}
 
 
-def check_version():
-    validate_game(settings.game_dir())
-
-
-def validate_game(game):
-    game = Path(game)
-    for name, expected in GAME_HASHES.items():
-        path = game / name
-        require(path.is_file(), '所选目录缺少 ' + name + '，请选择游戏程序所在文件夹。')
-        require(sha(path.read_bytes()) == expected, '游戏版本尚未适配（' + name + '），已停止修改。')
-    return game
-
-
 def validate_game_directory(game):
     game = Path(game)
     for name in GAME_HASHES:
@@ -256,9 +241,8 @@ def validate_game_directory(game):
 
 def check_live_version():
     game = validate_game_directory(settings.game_dir())
-    for name in ['Rance10.exe', 'Rance10.ain']:
-        require(save_compat.file_hash(game / name) == GAME_HASHES[name],
-                '实时修改尚未适配此游戏版本（' + name + '）。卡牌功能按本机数据单独检查。')
+    import live_profile
+    return live_profile.prepare(game)[0]
 
 
 def collection(s):
@@ -324,8 +308,10 @@ def ensure_character(s, name, chars, changed_arrays, data):
     save_compat.validate_save(s, scope='character_write')
     import character_data
     info = character_data.load()
-    root = info.get('character_root', '识别名情报')
-    leaf = '事件' if root == '识别名情报' else 'イベント'
+    paths = data.get('rules', {}).get('event_paths', {})
+    root, leaf = paths.get('character_root'), paths.get('event_leaf')
+    require(root == info.get('character_root', '识别名情报') and bool(leaf),
+            '新人物事件路径与本机资料不同，请重新准备图鉴。')
     from training import next_exp
     ident = addstr(s, name)
     replay = addrecord(s, 'CharacterEventCollection', {

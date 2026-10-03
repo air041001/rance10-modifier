@@ -13,11 +13,6 @@ import character_data
 import engine
 import settings
 
-BODY_OFFSET = 0x449B38
-BODY_LENGTH = 368
-BODY_HASH = '967127b7fe972215b3900d3f6f3d84571a4aa29943b86f5b642a4a3da5a68171'
-FIRST_LENGTH, SECOND_OFFSET = 114, 256
-CODE_LENGTH = 14572638
 OPS = dict(PUSH=0, POP=1, REF=2, PUSHGLOBALPAGE=4, PUSHLOCALPAGE=5,
            NOT=7, GTE=22, EQUALE=24, ASSIGN=25, DUP2=41, IFZ=45,
            RETURN=47, CALLMETHOD=92, SWAP=102, DELETE=119, A_REF=121, SP_INC=124)
@@ -52,35 +47,38 @@ class Code:
         self.op('REF'); self.op('DELETE'); self.op('PUSH', -1); self.op('ASSIGN'); self.op('POP')
 
 
-def make_code(character_handle, story_handle, source):
+def make_code(character_handle, story_handle, source, profile):
+    layout = profile['Food']
+    body_offset, body_length = layout['Offset'], layout['Length']
+    first_length, second_offset = layout['FirstLength'], layout['SecondOffset']
     engine.require(all(type(handle) is int and 0 < handle < 10000000
                        for handle in [character_handle, story_handle]),
                    '运行中的人物标识无效，请重新读取。')
-    engine.require(isinstance(source, bytes) and len(source) == BODY_LENGTH, '餐券筛选程序长度不一致。')
+    engine.require(isinstance(source, bytes) and len(source) == body_length, '餐券筛选程序长度不一致。')
     c = Code()
     # Find's first Where lambda receives a string, with only two dummy slots.
     # Its caller still handles IsAvailable, unavailable cards, and deduplication.
-    c.op('PUSHGLOBALPAGE'); c.op('PUSH', 257); c.op('REF')
-    c.op('PUSH', 27976)  # CharacterCollection.Get
+    c.op('PUSHGLOBALPAGE'); c.op('PUSH', profile['CharacterGlobal']); c.op('REF')
+    c.op('PUSH', layout['GetCharacter'])
     c.local(0); c.op('A_REF'); c.op('CALLMETHOD', 1)
     c.capture(1)  # Own the Character for the remainder of this frame.
     c.op('PUSH', character_handle); c.op('EQUALE'); c.fail_if_false()
     # Borrow its owned FoodTicketEvent; CALLMETHOD does not consume 'this'.
-    c.op('PUSH', story_handle); c.op('PUSH', 28015); c.op('CALLMETHOD', 0)
+    c.op('PUSH', story_handle); c.op('PUSH', layout['IsMax']); c.op('CALLMETHOD', 0)
     c.op('NOT'); c.op('RETURN')  # Preserve the game's IsMax test.
-    failure = BODY_OFFSET + len(c.data)
+    failure = body_offset + len(c.data)
     c.op('PUSH', 0); c.op('RETURN')
     for pos in c.jumps:
         struct.pack_into('<i', c.data, pos, failure)
-    engine.require(len(c.data) <= FIRST_LENGTH, '餐券筛选代码超出适配范围。')
-    c.data.extend(b'\x01\x00' * ((FIRST_LENGTH - len(c.data)) // 2))
+    engine.require(len(c.data) <= first_length, '餐券筛选代码超出适配范围。')
+    c.data.extend(b'\x01\x00' * ((first_length - len(c.data)) // 2))
     result = bytearray(source)
-    result[:FIRST_LENGTH] = c.data
+    result[:first_length] = c.data
     # Find normally fills empty slots with people whose stories are complete.
     # Disable only that fill lambda; leave its caller and map finder untouched.
     filler = Code(); filler.op('PUSH', 0); filler.op('RETURN')
-    filler.data.extend(b'\x01\x00' * ((BODY_LENGTH - SECOND_OFFSET - len(filler.data)) // 2))
-    result[SECOND_OFFSET:] = filler.data
+    filler.data.extend(b'\x01\x00' * ((body_length - second_offset - len(filler.data)) // 2))
+    result[second_offset:] = filler.data
     return bytes(result)
 
 
@@ -119,15 +117,17 @@ class Session:
 
     def start(self):
         game_dir = str(settings.game_dir().resolve())
+        profile_path = str(engine.check_live_version())
         if self.process and self.process.poll() is None:
-            if self.game_dir == game_dir and not self.process.stdin.closed:
+            if self.game_dir == game_dir and getattr(self, 'profile_path', None) == profile_path and not self.process.stdin.closed:
                 return
             self._stop()
             engine.require(self.process.poll() is not None, '正在取消原游戏目录的指定，请稍后重试。')
         self.answers = queue.Queue()
         self.game_dir = game_dir
+        self.profile_path = profile_path
         self.process = subprocess.Popen([str(app_paths.RESOURCE_DIR / 'LiveValues.exe'),
-            '--food-watch', '--parent-pid', str(os.getpid()), '--game-dir', game_dir],
+            '--food-watch', '--parent-pid', str(os.getpid()), '--game-dir', game_dir, '--runtime-profile', profile_path],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
             encoding='utf-8', creationflags=subprocess.CREATE_NO_WINDOW)
         threading.Thread(target=self.read, args=(self.process, self.answers), daemon=True).start()
@@ -185,7 +185,7 @@ class Session:
         engine.require(story['maximum'] > 0, '“%s”没有可播放的餐券故事。' % character)
         engine.require(not story['finished'], '“%s”的餐券故事已完成。' % character)
         target = next(row for row in snapshot['characters'] if row['name'] == character)
-        patch = make_code(target['handle'], target['story_handle'], base64.b64decode(snapshot['source_code']))
+        patch = make_code(target['handle'], target['story_handle'], base64.b64decode(snapshot['source_code']), snapshot['profile'])
         return self.request(dict(action='arm', character=character, character_handle=target['handle'],
             character_page=target['page'], stage=target['stage'], maximum=story['maximum'],
             story_handle=target['story_handle'], story_page=target['story_page'],

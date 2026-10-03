@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
@@ -73,8 +74,8 @@ internal sealed class VmPages {
         pointer = Pointer(handle);
         int length = type == 2 ? 36 : 44;
         byte[] meta = Read(pointer, length);
-        uint wrapper = c.ModuleBase + (type == 2 ? 0x398e74u : type == 3 ? 0x398ee8u : 0x399138u);
-        uint kind = c.ModuleBase + (type == 2 ? 0x398e68u : type == 3 ? 0x398f00u : 0x399088u);
+        string name=type==2?"String":type==3?"Array":"Struct";
+        uint wrapper=c.Types[name],kind=c.Types[name+"Kind"];
         if (BitConverter.ToUInt32(meta, 0) != wrapper || BitConverter.ToInt32(meta, 4) != type ||
             BitConverter.ToUInt32(meta, 12) != c.Marker || BitConverter.ToUInt32(meta, 28) == 0 ||
             BitConverter.ToUInt32(meta, 32) != kind ||
@@ -108,17 +109,18 @@ internal sealed class VmPages {
         if (zero < 0) throw new InvalidOperationException("游戏字符串没有终止符。");
         if (!meta.SequenceEqual(Read(pointer, meta.Length)) || Pointer(handle) != pointer)
             throw new InvalidOperationException("游戏名称刚刚更新，请重新刷新。");
-        return Encoding.GetEncoding(936, EncoderFallback.ExceptionFallback, DecoderFallback.ExceptionFallback).GetString(raw, 0, zero);
+        return Encoding.GetEncoding(c.Profile.CodePage, EncoderFallback.ExceptionFallback, DecoderFallback.ExceptionFallback).GetString(raw, 0, zero);
     }
     internal int Global(int index) { return (int)Word(globals.Data + (uint)index * 4); }
-    internal int[] Characters() { return Values(Values(Global(257), 4, 1)[0], 3); }
+    internal int[] Record(int handle,string name) { return c.Profile.Normalize(name,Values(handle,4,c.Profile.Counts[name])); }
+    internal int[] Characters() { return Values(Record(Global(c.Profile.CharacterGlobal),"CharacterCollection")[0],3); }
     internal List<Dictionary<string, object>> Cards() {
         var result = new List<Dictionary<string, object>>();
-        int[] orgs = Values(Values(Global(259), 4, 6)[0], 3, 10);
+        int[] orgs=Values(Record(Global(c.Profile.CardGlobal),"PlayerCardCollection")[0],3,10);
         for (int index = 0; index < orgs.Length; index++) {
-            int[] cards = Values(Values(orgs[index], 4, 9)[0], 3);
+            int[] cards=Values(Record(orgs[index],"OrganizationCardCollection")[0],3);
             foreach (int handle in cards) {
-                int[] card = Values(handle, 4, 13);
+                int[] card=Record(handle,"PlayerCard");
                 if (card[6] <= 0 || card[6] > 11) throw new InvalidOperationException("卡牌份数与适配版本不一致。");
                 result.Add(new Dictionary<string, object> { {"id", Text(card[9])}, {"faction", index + 1},
                     {"count", card[6]}, {"overridden", card[4] >= 0 || card[5] >= 0} });
@@ -130,7 +132,7 @@ internal sealed class VmPages {
         int[] handles = Characters();
         var characters = new List<Dictionary<string, object>>();
         foreach (int handle in handles) {
-            int[] value = Values(handle, 4, 7), story = Values(value[5], 4, 3);
+            int[] value=Record(handle,"Character"),story=Record(value[5],"FoodTicketEvent");
             string name = Text(value[0]);
             if (value[1] < 0 || value[1] > 200 || story[1] < 0 || story[1] > 3 || Text(story[0]) != name)
                 throw new InvalidOperationException("人物等级或故事记录与适配版本不一致。");
@@ -147,9 +149,9 @@ internal sealed class VmPages {
 }
 
 internal static class FoodSelector {
-    const uint Offset = 0x449b38;
-    const int Length = 368, CodeLength = 14572638;
-    const string OriginalHash = "967127b7fe972215b3900d3f6f3d84571a4aa29943b86f5b642a4a3da5a68171";
+    static uint Offset { get { return connection.Profile.Food.Offset; } }
+    static int Length { get { return connection.Profile.Food.Length; } }
+    static string OriginalHash { get { return connection.Profile.Food.SpanHash; } }
     static Connection connection;
     static GlobalsPage globals;
     static uint codeBase;
@@ -169,7 +171,7 @@ internal static class FoodSelector {
         byte[] bounds = c.Read(page.Context + 140, 8);
         if (bounds == null) throw new InvalidOperationException("游戏正在切换画面，请稍后重试。");
         uint start = BitConverter.ToUInt32(bounds, 0), end = BitConverter.ToUInt32(bounds, 4);
-        if (start < 0x10000 || end <= start || end - start != CodeLength)
+        if (start < 0x10000 || end <= start || end - start != c.Profile.CodeLength)
             throw new InvalidOperationException("餐券筛选程序与适配版本不一致。");
         return start;
     }
@@ -182,9 +184,9 @@ internal static class FoodSelector {
         if (!CurrentGlobals()) return false;
         var vm = new VmPages(connection, globals);
         return vm.Pointer(targetHandle) == targetPage && vm.Pointer(targetNameHandle) == targetStringPage &&
-            vm.Pointer(targetStoryHandle) == targetStoryPage && vm.Values(targetHandle, 4, 7)[0] == targetNameHandle &&
-            vm.Values(targetHandle, 4, 7)[5] == targetStoryHandle &&
-            vm.Values(targetStoryHandle, 4, 3)[1] < targetMaximum && vm.Characters().Contains(targetHandle);
+            vm.Pointer(targetStoryHandle) == targetStoryPage && vm.Record(targetHandle,"Character")[0] == targetNameHandle &&
+            vm.Record(targetHandle,"Character")[5] == targetStoryHandle &&
+            vm.Record(targetStoryHandle,"FoodTicketEvent")[1] < targetMaximum && vm.Characters().Contains(targetHandle);
     }
     static void Forget() {
         if (connection != null) connection.Dispose();
@@ -201,12 +203,12 @@ internal static class FoodSelector {
             if (pointer == null) throw new InvalidOperationException("无法核对游戏执行位置。");
             uint ip = BitConverter.ToUInt32(pointer, 0);
             // Includes the surrounding finder, rather than only the lambda body.
-            if (ip >= codeBase + 0x449b10 && ip < codeBase + 0x44a2f0)
+            if (ip >= codeBase + connection.Profile.Food.GuardStart && ip < codeBase + connection.Profile.Food.GuardEnd)
                 throw new InvalidOperationException("正在生成餐券候选，请回到稳定画面后重试。");
             // Check callers too: a lambda can currently be inside a getter/HLL.
             // CIntStack is a vtable, top index, and 256 inline return offsets.
             byte[] stack = connection.Read(page.Context + 188, 8);
-            if (stack == null || BitConverter.ToUInt32(stack, 0) != connection.ModuleBase + 0x3987e4)
+            if (stack == null || BitConverter.ToUInt32(stack, 0) != connection.Types["Stack"])
                 throw new InvalidOperationException("无法核对餐券筛选的调用位置，本次未修改。");
             int top = BitConverter.ToInt32(stack, 4);
             if (top < -1 || top > 255) throw new InvalidOperationException("游戏调用栈与适配版本不一致。");
@@ -214,7 +216,7 @@ internal static class FoodSelector {
             if (returns == null) throw new InvalidOperationException("无法核对游戏调用栈。");
             for (int index = 0; index <= top; index++) {
                 uint caller = BitConverter.ToUInt32(returns, index * 4);
-                if (caller >= 0x449b10 && caller < 0x44a2f0)
+                if (caller >= connection.Profile.Food.GuardStart && caller < connection.Profile.Food.GuardEnd)
                     throw new InvalidOperationException("正在生成餐券候选，请回到稳定画面后重试。");
             }
             uint address = codeBase + Offset;
@@ -225,7 +227,7 @@ internal static class FoodSelector {
             bool success = Native.WriteProcessMemory(connection.Handle, new IntPtr((long)address),
                 replacement, (UIntPtr)Length, out written);
             byte[] after = connection.Read(address, Length);
-            if (!success || written.ToUInt64() != Length || after == null || !after.SequenceEqual(replacement)) {
+            if (!success || written.ToUInt64() != (ulong)Length || after == null || !after.SequenceEqual(replacement)) {
                 Native.WriteProcessMemory(connection.Handle, new IntPtr((long)address), before,
                     (UIntPtr)Length, out written);
                 after = connection.Read(address, Length);
@@ -255,16 +257,19 @@ internal static class FoodSelector {
     static void Arm(Dictionary<string, object> command) {
         Restore();
         byte[] candidate = Convert.FromBase64String((string)command["patch"]);
-        if (candidate.Length != Length) throw new InvalidOperationException("餐券筛选代码长度不匹配。");
-        connection = new Connection(true);
+        connection = new Connection(true, true);
         try {
+            if(connection.Profile.Food==null)throw new InvalidOperationException(connection.Profile.FoodError??"餐券候选规则需要适配。");
+            if(candidate.Length!=Length)throw new InvalidOperationException("餐券筛选代码长度不匹配。");
             globals = Engine.Locate(connection, false).Globals;
             codeBase = CodeBase(connection, globals);
             original = connection.Read(codeBase + Offset, Length);
             if (original == null || Hash(original) != OriginalHash)
                 throw new InvalidOperationException("餐券筛选函数与适配版本不一致，或另一修改器已指定人物。");
             patch = candidate;
-            if (!original.Skip(114).Take(142).SequenceEqual(patch.Skip(114).Take(142)))
+            var f=connection.Profile.Food;
+            if (!original.Skip(f.FirstLength).Take(f.SecondOffset-f.FirstLength)
+                .SequenceEqual(patch.Skip(f.FirstLength).Take(f.SecondOffset-f.FirstLength)))
                 throw new InvalidOperationException("餐券指定改变了筛选函数以外的代码，没有修改。");
             character = (string)command["character"];
             if (connection.Process.Id != Convert.ToInt32(command["pid"]) || connection.Session != Convert.ToInt64(command["session"]))
@@ -274,7 +279,7 @@ internal static class FoodSelector {
             targetPage = Convert.ToUInt32(command["character_page"]);
             if (!vm.Characters().Contains(targetHandle) || vm.Pointer(targetHandle) != targetPage)
                 throw new InvalidOperationException("游戏正在换档，请重新读取人物。");
-            int[] value = vm.Values(targetHandle, 4, 7), story = vm.Values(value[5], 4, 3);
+            int[] value=vm.Record(targetHandle,"Character"),story=vm.Record(value[5],"FoodTicketEvent");
             targetNameHandle = value[0]; targetStringPage = vm.Pointer(targetNameHandle);
             if (vm.Text(targetNameHandle) != character || vm.Text(story[0]) != character ||
                 vm.Text(story[2]) != (string)command["story_key"] || story[1] != Convert.ToInt32(command["stage"]))
@@ -314,6 +319,9 @@ internal static class FoodSelector {
             if (parentIndex < 0 || gameIndex < 0) throw new InvalidOperationException("运行组件缺少启动参数。");
             parent = Process.GetProcessById(Int32.Parse(args[parentIndex + 1]));
             RuntimeSettings.GameDirectory = args[gameIndex + 1];
+            int profileIndex=Array.IndexOf(args,"--runtime-profile");
+            if(profileIndex<0 || profileIndex+1>=args.Length)throw new InvalidOperationException("运行组件缺少本机结构资料。");
+            RuntimeSettings.ProfilePath=args[profileIndex+1];
             var commands = new Queue<Dictionary<string, object>>();
             Thread input = new Thread(delegate() {
                 try {
@@ -341,15 +349,17 @@ internal static class FoodSelector {
                         } else if (action == "cancel") {
                             Restore(); result = State(true, true, "指定已取消，恢复游戏原来的随机候选。");
                         } else if (action == "probe") {
-                            using (var c = new Connection(false)) {
+                            using (var c = new Connection(false, true)) {
+                                if(c.Profile.Food==null)throw new InvalidOperationException(c.Profile.FoodError??"餐券候选规则需要适配。");
                                 GlobalsPage page = Engine.Locate(c, false).Globals;
-                                byte[] body = c.Read(CodeBase(c, page) + Offset, Length);
-                                if (body == null || (Hash(body) != OriginalHash &&
+                                byte[] body=c.Read(CodeBase(c,page)+c.Profile.Food.Offset,c.Profile.Food.Length);
+                                if (body == null || (Hash(body) != c.Profile.Food.SpanHash &&
                                     (connection == null || c.Process.Id != connection.Process.Id || !body.SequenceEqual(patch))))
                                     throw new InvalidOperationException("餐券筛选函数与适配版本不一致。");
                                 result = State(true, true, "已读取当前运行中的人物和故事进度，本次未写入。");
                                 var snapshot = new VmPages(c, page).Snapshot();
-                                snapshot["source_code"] = Convert.ToBase64String(Hash(body) == OriginalHash ? body : original);
+                                snapshot["source_code"] = Convert.ToBase64String(Hash(body) == c.Profile.Food.SpanHash ? body : original);
+                                snapshot["profile"] = new JavaScriptSerializer().DeserializeObject(File.ReadAllText(RuntimeSettings.ProfilePath,Encoding.UTF8));
                                 result["snapshot"] = snapshot;
                             }
                         } else throw new InvalidOperationException("未知餐券操作。");

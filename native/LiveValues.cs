@@ -14,6 +14,7 @@ using System.Windows.Forms;
 
 internal static class RuntimeSettings {
     internal static string GameDirectory;
+    internal static string ProfilePath;
 }
 
 internal static class Native {
@@ -49,7 +50,9 @@ internal static class Native {
 internal sealed class Connection : IDisposable {
     public Process Process; public IntPtr Handle; public uint Marker, ModuleBase;
     public long Session;
-    public Connection(bool write) {
+    public RuntimeProfile Profile;
+    public Dictionary<string,uint> Types;
+    public Connection(bool write, bool includeFood=false) {
         if (String.IsNullOrWhiteSpace(RuntimeSettings.GameDirectory))
             throw new InvalidOperationException("请先在设置中选择游戏目录。");
         string game = Path.GetFullPath(Path.Combine(RuntimeSettings.GameDirectory, "Rance10.exe"));
@@ -66,23 +69,18 @@ internal sealed class Connection : IDisposable {
         }
         Process = processes[0];
         try {
-            string hash;
-            using (SHA256 sha = SHA256.Create())
-            using (FileStream input = File.OpenRead(game))
-                hash = BitConverter.ToString(sha.ComputeHash(input)).Replace("-", "").ToLowerInvariant();
-            if (hash != "39a508c05b13afc5427f0b722fce5c4edeced126587e037d585cf0e70d279297")
-                throw new InvalidOperationException("游戏程序与已验证版本不同，已停止定位和修改。");
+            Profile = RuntimeProfile.Load(RuntimeSettings.ProfilePath);
+            if (RuntimeProfile.FileHash(game) != Profile.ExeHash)
+                throw new InvalidOperationException("游戏程序刚刚变化，请重新读取游戏。");
             Session = Process.StartTime.ToUniversalTime().Ticks;
             ModuleBase = checked((uint)Process.MainModule.BaseAddress.ToInt64());
-            Marker = checked(ModuleBase + 0x3945d8);
             string ainPath = Path.Combine(Path.GetDirectoryName(game), "Rance10.ain");
-            using (SHA256 sha = SHA256.Create())
-            using (FileStream input = File.OpenRead(ainPath))
-                hash = BitConverter.ToString(sha.ComputeHash(input)).Replace("-", "").ToLowerInvariant();
-            if (hash != "85a7b91d74186aa44b2b5319fc036988344fbe45c9cc7cf7cbe2c3a4c5115247")
-                throw new InvalidOperationException("游戏数据与已验证版本不同，已停止定位和修改。");
+            if (RuntimeProfile.FileHash(ainPath) != Profile.AinHash)
+                throw new InvalidOperationException("游戏脚本刚刚变化，请重新读取游戏。");
             Handle = Native.OpenProcess(write ? 0x438u : 0x410u, false, Process.Id);
             if (Handle == IntPtr.Zero) throw new InvalidOperationException("无法访问游戏进程。请让游戏和工具以相同权限运行。");
+            Types = RuntimeTypes.Resolve(this, includeFood);
+            Marker = Types["Memory"];
         } catch { Dispose(); throw; }
     }
     public byte[] Read(uint address, int size) {
@@ -90,6 +88,18 @@ internal sealed class Connection : IDisposable {
         Native.ReadProcessMemory(Handle, new IntPtr((long)address), buffer, (UIntPtr)(uint)size, out read);
         if (read.ToUInt64() != (ulong)size) return null;
         return buffer;
+    }
+    internal void VerifyScript(GlobalsPage page) {
+        byte[] bounds = Read(page.Context+140,8);
+        if(bounds==null)throw new InvalidOperationException("游戏正在切换进度，请稍后重试。");
+        uint start=BitConverter.ToUInt32(bounds,0),end=BitConverter.ToUInt32(bounds,4);
+        if(start<0x10000 || end<=start || end-start!=Profile.CodeLength)
+            throw new InvalidOperationException("运行中的脚本和所选游戏目录不同，请重新启动该目录的游戏。");
+        byte[] code=Read(start,Profile.CodeLength);
+        if(code==null)throw new InvalidOperationException("暂时无法读取运行脚本，请稍后重试。");
+        if(Profile.Food!=null)Array.Clear(code,(int)Profile.Food.Offset,Profile.Food.Length);
+        if(RuntimeProfile.Hash(code)!=Profile.CodeHash)
+            throw new InvalidOperationException("运行中的脚本内容与所选目录不同，请重新启动该目录的游戏。");
     }
     public void Dispose() {
         if (Handle != IntPtr.Zero) { Native.CloseHandle(Handle); Handle = IntPtr.Zero; }
@@ -109,29 +119,26 @@ internal sealed class LiveObject {
 }
 
 internal static class Engine {
-    // This exact AIN has 361 globals. Index 256 is g_playerCommonParam,
-    // of struct type 865. Its first member is int m_foodTicket.
-    const int GlobalBytes = 361 * 4;
-    const int PlayerGlobalIndex = 256;
 
     internal static GlobalsPage CheckGlobals(Connection c, uint owner) {
+        int globalBytes=c.Profile.GlobalCount*4;
         if (owner < 0x1000c || owner > 0xffffffdf) return null;
         byte[] meta = c.Read(owner - 12, 44);
-        if (meta == null || BitConverter.ToUInt32(meta, 0) != c.ModuleBase + 0x399024 ||
+        if (meta == null || BitConverter.ToUInt32(meta, 0) != c.Types["Global"] ||
             BitConverter.ToUInt32(meta, 12) != c.Marker ||
-            BitConverter.ToUInt32(meta, 20) != GlobalBytes ||
-            BitConverter.ToUInt32(meta, 24) != GlobalBytes ||
+            BitConverter.ToUInt32(meta, 20) != globalBytes ||
+            BitConverter.ToUInt32(meta, 24) != globalBytes ||
             BitConverter.ToUInt32(meta, 28) == 0 ||
-            BitConverter.ToUInt32(meta, 32) != c.ModuleBase + 0x39903c)
+            BitConverter.ToUInt32(meta, 32) != c.Types["GlobalKind"])
             return null;
         uint data = BitConverter.ToUInt32(meta, 16);
         uint context = BitConverter.ToUInt32(meta, 36);
         if ((data & 3) != 0 || data < 0x10000 || context < 0x10000) return null;
-        byte[] value = c.Read(data + PlayerGlobalIndex * 4, 4);
+        byte[] value = c.Read(data + (uint)c.Profile.PlayerGlobal * 4, 4);
         if (value == null) return null;
         int handle = BitConverter.ToInt32(value, 0);
         if (handle <= 0 || handle >= 10000000) return null;
-        byte[] bonus = c.Read(data + 261 * 4, 4);
+        byte[] bonus = c.Read(data + (uint)c.Profile.BonusGlobal * 4, 4);
         if (bonus == null) return null;
         int bonusHandle = BitConverter.ToInt32(bonus, 0);
         if (bonusHandle <= 0 || bonusHandle >= 10000000) return null;
@@ -149,15 +156,17 @@ internal static class Engine {
     }
 
     static LiveObject CheckObject(Connection c, uint owner, GlobalsPage globals, bool bonus) {
-        int bytes = bonus ? 12 : 48;
+        string name=bonus?"PartyBonusSwitcher":"PlayerCommonParam";
+        int bytes=c.Profile.Counts[name]*4;
         int expectedHandle = bonus ? globals.BonusHandle : globals.PlayerHandle;
         if (owner < 0x1000c || owner > 0xffffffdf) return null;
         byte[] meta = c.Read(owner - 12, 44);
-        if (meta == null || BitConverter.ToUInt32(meta, 0) != c.ModuleBase + 0x399138 ||
+        if (meta == null || BitConverter.ToUInt32(meta, 0) != c.Types["Struct"] ||
+            BitConverter.ToInt32(meta,4)!=4 ||
             BitConverter.ToUInt32(meta, 12) != c.Marker ||
             BitConverter.ToUInt32(meta, 20) != bytes || BitConverter.ToUInt32(meta, 24) != bytes ||
             BitConverter.ToUInt32(meta, 28) == 0 ||
-            BitConverter.ToUInt32(meta, 32) != c.ModuleBase + 0x399088 ||
+            BitConverter.ToUInt32(meta, 32) != c.Types["StructKind"] ||
             BitConverter.ToUInt32(meta, 36) != globals.Context ||
             BitConverter.ToInt32(meta, 40) != expectedHandle)
             return null;
@@ -166,6 +175,7 @@ internal static class Engine {
         byte[] body = c.Read(data, bytes); if (body == null) return null;
         int[] values = new int[bytes / 4];
         for (int i = 0; i < values.Length; i++) values[i] = BitConverter.ToInt32(body, i * 4);
+        values=c.Profile.Normalize(name,values);
         if (!bonus && !ValidValues(values)) return null;
         if (bonus && (values[0] < 0 || values[1] <= 0 || values[1] >= 10000000 ||
             values[2] < 0 || values[2] > 100000)) return null;
@@ -188,7 +198,8 @@ internal static class Engine {
     }
 
     internal static LiveObject Locate(Connection c, bool bonus) {
-        int expectedBytes = bonus ? 12 : 48;
+        int expectedBytes=c.Profile.Counts[bonus?"PartyBonusSwitcher":"PlayerCommonParam"]*4;
+        int globalBytes=c.Profile.GlobalCount*4;
         // Scan anew on each manual action; no stale address survives a load or restart.
         var globalPages = new Dictionary<uint, GlobalsPage>();
         var playerOwners = new HashSet<uint>();
@@ -211,7 +222,7 @@ internal static class Engine {
                     for (int i = 0; i + 20 <= available; i += 4) {
                         if (BitConverter.ToUInt32(buffer, i) != c.Marker) continue;
                         int length = BitConverter.ToInt32(buffer, i + 8);
-                        if ((length != expectedBytes && length != GlobalBytes) ||
+                        if ((length != expectedBytes && length != globalBytes) ||
                             BitConverter.ToInt32(buffer, i + 12) != length) continue;
                         uint owner = checked((uint)(chunk + (uint)i));
                         if (length == expectedBytes) playerOwners.Add(owner);
@@ -231,6 +242,7 @@ internal static class Engine {
                 "游戏已启动，尚未读取到当前进度。请载入进度，等画面稳定后刷新状态。" :
                 "游戏正在切换进度，本次未修改。请等画面稳定后刷新状态。");
         GlobalsPage currentGlobals = globalPages.Values.First();
+        c.VerifyScript(currentGlobals);
         if (!SameGlobals(CheckGlobals(c, currentGlobals.Owner), currentGlobals))
             throw new InvalidOperationException("游戏正在切换进度，请稍后刷新状态。");
         var hits = new Dictionary<uint, LiveObject>();
@@ -275,7 +287,8 @@ internal static class Engine {
                 if (fresh == null || !fresh.Values.SequenceEqual(target.Values))
                     throw new InvalidOperationException("游戏数值正在变化，本次未修改。请刷新后重试。");
                 UIntPtr written;
-                if (!Native.WriteProcessMemory(c.Handle, new IntPtr((long)(fresh.Data + (uint)(field * 4))),
+                int actualField=c.Profile.Fields[targetBonus?"PartyBonusSwitcher":"PlayerCommonParam"][field];
+                if (!Native.WriteProcessMemory(c.Handle, new IntPtr((long)(fresh.Data + (uint)(actualField * 4))),
                     BitConverter.GetBytes(value), (UIntPtr)4, out written) || written.ToUInt64() != 4)
                     throw new InvalidOperationException("写入失败。");
                 writes = 4;
@@ -328,6 +341,9 @@ internal static class Program {
                 if (directory < 0 || directory + 1 >= args.Length)
                     throw new InvalidOperationException("请先选择游戏目录。");
                 RuntimeSettings.GameDirectory = Path.GetFullPath(args[directory + 1]);
+                int profile=Array.IndexOf(args,"--runtime-profile");
+                if(profile<0 || profile+1>=args.Length)throw new InvalidOperationException("缺少本机运行结构资料，请更新完整修改器。");
+                RuntimeSettings.ProfilePath=args[profile+1];
                 result = Engine.Run(action, amount);
             }
         } catch (Exception ex) {

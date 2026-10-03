@@ -23,7 +23,7 @@ def native():
                     '/out:' + str(ROOT / 'resources/LiveValues.exe'),
                     '/r:System.Web.Extensions.dll', '/r:System.Drawing.dll',
                     '/r:System.Windows.Forms.dll', '/r:System.Core.dll',
-                    str(ROOT / 'native/LiveValues.cs'), str(ROOT / 'native/FoodSelector.cs')], check=True)
+                    str(ROOT / 'native/LiveValues.cs'), str(ROOT / 'native/FoodSelector.cs'), str(ROOT / 'native/RuntimeProfile.cs')], check=True)
 
 
 def licenses():

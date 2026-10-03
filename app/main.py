@@ -24,7 +24,7 @@ class App(tk.Tk):
     def __init__(self, auto_connect=True):
         app_paths.initialize()
         super().__init__()
-        self.title('兰斯10修改器 · v' + VERSION + ' 预览版')
+        self.title('兰斯10修改器 · v' + VERSION)
         self.geometry('1300x880')
         self.minsize(1120, 800)
         self.configure(bg=BG)
@@ -53,7 +53,7 @@ class App(tk.Tk):
         tk.Frame(info, bg='#35445a', height=1).pack(fill='x', pady=(0, 18))
         tk.Label(info, text='即时数值  ·  按需修改\n卡牌扩充  ·  读档生效', font=(FONT, 9),
                  bg=NAV, fg='#9aacc3', justify='left', anchor='w').pack(fill='x')
-        tk.Label(info, text='本地工具  /  v' + VERSION + ' 预览版', font=(FONT, 8), bg=NAV,
+        tk.Label(info, text='本地工具  /  v' + VERSION, font=(FONT, 8), bg=NAV,
                  fg='#74859d', anchor='w').pack(fill='x', pady=(16, 0))
 
         workspace = tk.Frame(self, bg=BG)

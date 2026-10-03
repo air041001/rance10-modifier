@@ -51,7 +51,7 @@ class Setup(ttk.Frame):
         self.compat_button = ttk.Button(row, text='复制兼容信息', command=self.copy_compatibility)
         self.compat_button.pack(side='left')
         self.controls.append(self.compat_button)
-        self.feedback = ttk.Label(paths, text='卡牌功能按本机卡表、存档结构和加卡规则检查。实时餐券与点数单独检查游戏版本。',
+        self.feedback = ttk.Label(paths, text='图鉴从本机游戏生成；存档与实时功能分别识别所需的数据结构。',
                                   style='SurfaceHint.TLabel', wraplength=850)
         self.feedback.pack(anchor='w', fill='x', pady=(12, 0))
 
@@ -154,7 +154,13 @@ class Setup(ttk.Frame):
     def browse_game(self):
         path = filedialog.askdirectory(parent=self, title='选择游戏程序所在文件夹')
         if path:
-            self.game.set(path)
+            self.select_game(path)
+
+    def select_game(self, path):
+        previous = app_paths.default_save_dir(self.game.get())
+        if not self.saves.get().strip() or Path(self.saves.get()).resolve() == previous.resolve():
+            self.saves.set(str(app_paths.default_save_dir(path)))
+        self.game.set(path)
 
     def browse_saves(self):
         path = filedialog.askdirectory(parent=self, title='选择存档目录', initialdir=str(app_paths.documents_dir()))
@@ -172,8 +178,10 @@ class Setup(ttk.Frame):
             if not game:
                 raise ValueError('请选择游戏目录。')
             engine.validate_game_directory(game)
-            if not Path(saves).is_dir():
-                raise ValueError('没有找到存档目录。请先在游戏中保存一次，或手动选择正确目录。')
+            if not saves:
+                raise ValueError('请选择存档目录，或重新选择游戏目录以自动识别。')
+            if Path(saves).exists() and not Path(saves).is_dir():
+                raise ValueError('存档路径是文件，请选择存档文件夹。')
             session = self.owner.training.food_session
             if session.process and session.process.poll() is None and session.game_dir != str(Path(game).resolve()):
                 session.close()
@@ -188,7 +196,10 @@ class Setup(ttk.Frame):
             self.owner.cards.invalidate()
             self.owner.training.invalidate()
             self.owner.numbers.current = None
-            self.feedback.configure(text='目录已保存。请准备本机图鉴；实时修改的适配状态会单独显示。', foreground=GREEN)
+            message = '目录已保存。请准备本机图鉴；实时修改的适配状态会单独显示。'
+            if not Path(config['save_dir']).is_dir():
+                message = '目录已保存，可先连接实时功能。保存游戏后可在此目录读取存档，或手动选择已有存档目录。'
+            self.feedback.configure(text=message, foreground=GREEN)
             self.owner.numbers.refresh()
         self.owner.run(work, done, '正在检查游戏与存档目录…', self.failed)
 
@@ -197,7 +208,7 @@ class Setup(ttk.Frame):
             if len(processes) != 1:
                 self.failed('请只运行一个游戏实例，或手动选择游戏目录。')
                 return
-            self.game.set(str(Path(processes[0]['path']).parent))
+            self.select_game(str(Path(processes[0]['path']).parent))
             self.save_paths()
         self.owner.run(runtime.discover, done, '正在查找已运行的游戏…', self.failed)
 

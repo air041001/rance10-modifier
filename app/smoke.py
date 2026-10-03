@@ -49,6 +49,12 @@ def check(app, options):
         assert after['missing'] == 0, app.setup.library_status.cget('text')
         upgrade = dict(before=before, after=after)
     geometry = []
+    app.training.context_loaded(dict(training_cards=[], manual=True, pending=[], slot=1,
+                                    star_cap=200, enhancement_cap=10))
+    app.update()
+    assert app.training.active is None and not app.training.characters
+    assert app.training.star_button.instate(['disabled'])
+    assert app.training.food_button.instate(['disabled'])
     app.training.loaded = True  # No background read is needed for geometry checks.
     for page in [app.setup, app.numbers, app.training, app.records, app.setup]:
         app.tabs.select(page)
@@ -79,6 +85,7 @@ def check(app, options):
                  instructions=(app_paths.RESOURCE_DIR / '使用说明.txt').is_file(),
                  navigation=geometry,
                  missing_library_stays_on_page=True, setup_controls_visible=setup_controls,
+                 empty_character_roster_ok=True,
                  library_upgrade=upgrade,
                  value_font=font.Font(app, font=app.theme.lookup('Value.TLabel', 'font')).actual(),
                  window_bottom=app.winfo_rooty() + app.winfo_height())
@@ -114,6 +121,7 @@ def check(app, options):
                 app.tabs.select(app.cards)
                 app.update()
                 state['cards'] = dict(displayed=len(app.cards.visible), image_loaded=bool(app.cards.preview_photo))
+                all_cards = context['cards']
                 nude_cards = [row for row in app.cards.visible if row['nude']]
                 state['cards']['nude'] = len(nude_cards)
                 if nude_cards:
@@ -141,22 +149,23 @@ def check(app, options):
                     types[kind] = len(app.cards.visible)
                     assert all(r['kind'] == kind for r in app.cards.visible)
                     assert all(app.images.get(r['id']) is not None for r in app.cards.visible)
-                assert types == {'人物': 662, '通用': 145, '物品': 177}, types
-                sword = next(r for r in app.cards.visible if r['id'] == '利萨斯圣剑')
-                app.cards.detail(sword)
-                app.update()
-                assert '共享物品★' in app.cards.card_hint.cget('text')
-                assert '使用过的圣剑' in app.cards.details.cget('text')
+                assert types == {kind: sum(r['kind'] == kind for r in all_cards) for kind in types}, types
+                if app.cards.visible:
+                    item = app.cards.visible[0]
+                    app.cards.detail(item)
+                    app.update()
+                    assert '共享物品★' in app.cards.card_hint.cget('text')
+                    assert item['description'] in app.cards.details.cget('text')
                 state['cards']['types'] = types
                 state['cards']['item_preview_loaded'] = bool(app.cards.preview_photo)
                 app.cards.kind.set('全部类型')
                 scopes = {}
-                for scope, expected in [('第一部及特殊', 857), ('第二部', 127)]:
+                for scope, appearances in [('第一部及特殊', (1, 3)), ('第二部', (2,))]:
                     app.cards.appearance.set(scope)
                     app.cards.filter()
                     app.update()
                     scopes[scope] = len(app.cards.visible)
-                    assert len(app.cards.visible) == expected
+                    assert len(app.cards.visible) == sum(r['appearance'] in appearances for r in all_cards)
                 app.cards.appearance.set('全部范围')
                 app.cards.filter()
                 state['cards']['scopes'] = scopes

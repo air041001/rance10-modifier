@@ -276,6 +276,30 @@ def library_status():
     return dict(expected=len(expected), ready=len(ready), missing=len(expected - ready))
 
 
+def card_asset(assets, cg, item=False):
+    # Some translations keep the original archive directory names. Resolve
+    # against the archive, independently of the EX text's character encoding.
+    for base in ['卡牌', 'カード']:
+        for folder in (['物品', 'アイテム'] if item else ['']):
+            prefix = base + '／' + (folder + '／' if folder else '')
+            for extension in ['.ajp', '.qnt', '.dcf', '.webp', '.png']:
+                name = prefix + cg + extension
+                if name in assets:
+                    return name
+
+
+def frame_assets(assets, faction, item=False):
+    import engine
+    jp = dict(zip(engine.ORG_NAMES[1:], ['主人公', 'リーザス', 'ヘルマン', 'ゼス', '自由都市',
+        'ＪＡＰＡＮ', 'その他', '亜人', 'モンスター', '神魔']))
+    for base in ['卡牌', 'カード']:
+        for resource in dict.fromkeys([faction, jp[faction]]):
+            for suffix in (['／物品', '／アイテム'] if item else ['']):
+                names = ['シス／%s／%s／%s所属%s.ajp' % (base, part, resource, suffix) for part in ['下地', '枠']]
+                if all(name in assets for name in names):
+                    return names
+
+
 def prepare_library(game, local_tool='', allow_download=False, progress=lambda message: None):
     import engine
     game = Path(game)
@@ -297,7 +321,7 @@ def prepare_library(game, local_tool='', allow_download=False, progress=lambda m
         try:
             character_info = character_data.parse(source_text, data['source'])
             data['character_root'] = character_info['character_root']
-            data['event_leaf'] = '事件' if input_encoding == 'CP936' else 'イベント'
+            data['event_leaf'] = data['rules'].get('event_paths', {}).get('event_leaf')
         except ValueError as exc:
             character_info = None
             data['rules']['groups']['characters'] = False
@@ -320,10 +344,7 @@ def prepare_library(game, local_tool='', allow_download=False, progress=lambda m
         for row in data['cards']:
             if not engine.displayable(row):
                 continue
-            base = '卡牌' if input_encoding == 'CP936' else 'カード'
-            prefix = base + ('／物品／' if row['種別'] == 10 else '／')
-            name = next((name for ext in ['.ajp', '.qnt', '.dcf', '.webp', '.png']
-                         if (name := prefix + row['ＣＧ名'] + ext) in assets), None)
+            name = card_asset(assets, row['ＣＧ名'], row['種別'] == 10)
             if not name:
                 missing.append(row['Id'])
                 continue
@@ -346,12 +367,8 @@ def prepare_library(game, local_tool='', allow_download=False, progress=lambda m
         needed = {row['asset'] for row in pending.values()}
         frames = {}
         for faction, item in {(row['faction'], row['item']) for row in pending.values()}:
-            jp_factions = dict(zip(engine.ORG_NAMES[1:], ['主人公', 'リーザス', 'ヘルマン', 'ゼス', '自由都市',
-                'ＪＡＰＡＮ', 'その他', '亜人', 'モンスター', '神魔']))
-            resource = jp_factions[faction] if input_encoding == 'CP932' else ('ＪＡＰＡＮ' if faction == 'JAPAN' else faction)
-            base = '卡牌' if input_encoding == 'CP936' else 'カード'
-            names = ['シス／%s／%s／%s所属%s.ajp' % (base, part, resource, '／物品' if item else '') for part in ['下地', '枠']]
-            if all(name in assets for name in names):
+            names = frame_assets(assets, faction, item)
+            if names:
                 frames[(faction, item)] = names
                 needed.update(names)
 

@@ -4,6 +4,7 @@ import os
 import json
 import shutil
 import sys
+import re
 from game_profile import PROFILE_ID
 
 def documents_dir():
@@ -67,7 +68,30 @@ def migrate_legacy():
         return
 
 
-def default_save_dir():
+def default_save_dir(game=None):
     base = documents_dir() / 'AliceSoft'
-    candidates = [base / name / 'SaveData' for name in ['兰斯10', 'ランス10', 'Rance10']]
+    names = ['兰斯10', 'ランス１０', 'ランス10', 'Rance10']
+    if game:
+        try:
+            text = (Path(game) / 'AliceStart.ini').read_bytes()
+            match = re.search(rb'^\s*GameName\s*=\s*"([^"\r\n]+)"', text, re.M)
+            folder = re.search(rb'^\s*SaveFolder\s*=\s*"([^"\r\n]+)"', text, re.M)
+            # Compare encoded names to real folders, avoiding guesses between
+            # Japanese and Chinese bytes that are valid in both encodings.
+            existing = [p.name for p in base.iterdir() if p.is_dir()] if base.is_dir() else []
+            matches = []
+            for name in dict.fromkeys(existing + names):
+                for encoding in ['utf-8', 'cp932', 'gbk']:
+                    try:
+                        if match and name.encode(encoding) == match[1]:
+                            matches.append(name)
+                    except UnicodeError:
+                        continue
+            if len(set(matches)) == 1:
+                save_folder = folder[1].decode('ascii') if folder else 'SaveData'
+                if save_folder not in ('', '.', '..') and not any(c in save_folder for c in '/\\:'):
+                    return base / matches[0] / save_folder
+        except (OSError, UnicodeError):
+            pass
+    candidates = [base / name / 'SaveData' for name in names]
     return next((path for path in candidates if path.is_dir()), candidates[0])

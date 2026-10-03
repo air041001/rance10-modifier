@@ -28,7 +28,7 @@ class BoundaryTests(unittest.TestCase):
                                 COMPONENT_DIR=new / 'components', LOG_FILE=new / 'operations.jsonl'):
                 app_paths.migrate_legacy()
                 self.assertEqual((new / 'cache/catalog.json').read_text(), 'new')
-                self.assertEqual(json.loads(app_paths.CONFIG_FILE.read_text())['alice_path'], str(new / 'components/alice-0.13.0.exe'))
+                self.assertEqual(json.loads(app_paths.CONFIG_FILE.read_text(encoding='utf-8'))['alice_path'], str(new / 'components/alice-0.13.0.exe'))
                 before = app_paths.CONFIG_FILE.read_bytes()
                 app_paths.migrate_legacy()
                 self.assertEqual(app_paths.CONFIG_FILE.read_bytes(), before)
@@ -49,12 +49,15 @@ class BoundaryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             assets.parse_table(text, '例')
 
-    def test_game_fingerprint_rejects_other_version(self):
+    def test_game_directory_requires_inputs_without_a_version_whitelist(self):
         with tempfile.TemporaryDirectory(prefix='rance-test-') as work:
             folder = Path(work)
-            (folder / 'Rance10.exe').write_bytes(b'not-the-supported-game')
-            with self.assertRaisesRegex(ValueError, '版本'):
-                engine.validate_game(folder)
+            for name in ['Rance10.exe', 'Rance10.ain', 'Rance10EX.ex']:
+                (folder / name).write_bytes(b'non-baseline installation')
+            self.assertEqual(engine.validate_game_directory(folder), Path(folder))
+            (Path(folder) / 'Rance10.ain').unlink()
+            with self.assertRaisesRegex(ValueError, 'Rance10.ain'):
+                engine.validate_game_directory(folder)
 
     def test_settings_keep_unicode_paths_without_rewriting_on_read(self):
         with tempfile.TemporaryDirectory(prefix='rance-test-') as work:
@@ -70,7 +73,7 @@ class BoundaryTests(unittest.TestCase):
                 self.assertEqual(hashlib.sha256(app_paths.CONFIG_FILE.read_bytes()).hexdigest(), before)
 
     def test_apply_rejects_stale_save_directory(self):
-        with patch.object(engine, 'check_version'), patch.object(settings, 'save_dir', return_value=Path('expected-folder')):
+        with patch.object(settings, 'save_dir', return_value=Path('expected-folder')):
             with self.assertRaisesRegex(ValueError, '目录'):
                 engine.apply(Path('other-folder/LocalSave22.asd'), ['ignored'], 'ignored')
 

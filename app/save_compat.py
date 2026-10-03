@@ -155,6 +155,22 @@ def normalize_code(text, symbols):
     return hashlib.sha256('\n'.join(result).encode('utf-8')).hexdigest()
 
 
+def event_paths(methods):
+    """Use actual initializer keys, including partially translated scripts."""
+    values = {}
+    for name in ['CharacterEventCollection@Init', 'FoodTicketEvent@Init']:
+        pushes = [json.loads(m[1]) for m in re.finditer(r'^\s*S_PUSH\s+("(?:\\.|[^"\\])*")\s*$', methods.get(name, ''), re.M)]
+        candidates = [s for s in pushes if s.count('%s') == 1 and '.%s' in s]
+        if len(candidates) != 1:
+            return {}
+        values[name] = candidates[0]
+    event = values['CharacterEventCollection@Init'].split('.%s.')
+    food = values['FoodTicketEvent@Init']
+    if len(event) != 2 or not all(event) or food != event[0] + '.%s':
+        return {}
+    return dict(character_root=event[0], event_leaf=event[1])
+
+
 def inspect_rules(game, tool, encoding, progress=lambda message: None):
     from assets import _run
     from concurrent.futures import ThreadPoolExecutor
@@ -167,17 +183,21 @@ def inspect_rules(game, tool, encoding, progress=lambda message: None):
     names = sorted({name for group in GROUPS.values() for name in group})
     def inspect(name):
         if name not in indices:
-            return name, ''
+            return name, '', ''
         text = _run(tool, ['ain', 'dump', '--function', name, '--no-macros'] + options + [game / 'Rance10.ain'])
-        return name, normalize_code(text, symbols)
+        return name, normalize_code(text, symbols), text if name in ['CharacterEventCollection@Init', 'FoodTicketEvent@Init'] else ''
     progress('正在核对加卡和培养所需的游戏规则…')
     with ThreadPoolExecutor(max_workers=4) as pool:
-        hashes = dict(pool.map(inspect, names))
+        checked = list(pool.map(inspect, names))
+    hashes = {name: digest for name, digest, _ in checked}
+    paths = event_paths({name: text for name, _, text in checked if text})
     from engine import require
     require(start_hash == file_hash(game / 'Rance10.ain'), '游戏脚本刚刚发生变化，请重新准备图鉴。')
     groups = {group: all(hashes[name] in EXPECTED.get(name, []) for name in members)
               for group, members in GROUPS.items()}
-    return dict(ain_sha256=start_hash, groups=groups,
+    if groups.get('characters') and not paths:
+        groups['characters'] = False
+    return dict(ain_sha256=start_hash, groups=groups, event_paths=paths,
                 mismatches=[name for name in names if hashes[name] not in EXPECTED.get(name, [])])
 
 
@@ -186,10 +206,11 @@ def rules(data):
     current = file_hash(settings.game_dir() / 'Rance10.ain')
     if data.get('schema') != 2:
         if current == game_profile.GAME_HASHES['Rance10.ain']:
+            data['rules'] = dict(event_paths=dict(character_root='识别名情报', event_leaf='事件'))
             return dict.fromkeys(GROUPS, True)
         raise ValueError('游戏脚本已更换，请重新准备本机图鉴以核对加卡规则。')
     info = data.get('rules', {})
-    if info.get('ain_sha256') != current:
+    if info.get('ain_sha256') != current or (info.get('groups', {}).get('characters') and 'event_paths' not in info):
         from assets import ensure_component
         tool = ensure_component(settings.load().get('alice_path', ''))
         info = inspect_rules(settings.game_dir(), tool, data['source']['encoding'])
@@ -214,7 +235,17 @@ def report(game):
         files={name: file_hash(game / name) for name in game_profile.GAME_HASHES})
     version = game / 'Version.txt'
     info['game_version'] = version.read_text(encoding='utf-8-sig', errors='replace').strip()[:80] if version.is_file() else '未提供'
-    info['live_supported'] = all(info['files'][name] == game_profile.GAME_HASHES[name] for name in ['Rance10.exe', 'Rance10.ain'])
+    try:
+        from live_profile import prepare
+        _, live = prepare(game)
+        info['live_script_supported'] = True
+        info['food_selector_supported'] = live.get('Food') is not None
+        if live.get('FoodError'):
+            info['food_selector_status'] = live['FoodError']
+        info['live_engine_check'] = '连接时识别实际运行引擎和脚本'
+    except (ValueError, OSError) as exc:
+        info['live_script_supported'] = False
+        info['live_status'] = str(exc)
     try:
         if game.resolve() != settings.game_dir().resolve():
             info['catalog_status'] = '所选游戏目录尚未保存，请先保存目录再准备本机图鉴。'

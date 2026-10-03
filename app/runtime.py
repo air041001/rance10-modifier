@@ -30,11 +30,11 @@ def discover():
 def run(action='probe', amount=None):
     if action not in ['probe', 'fill3', 'setpoints', 'addpoints']:
         raise ValueError('不支持的操作。')
-    engine.check_live_version()
+    profile = engine.check_live_version()
     args = ['--' + action]
     if amount is not None:
         args.append(str(int(amount)))
-    args += ['--game-dir', str(settings.game_dir())]
+    args += ['--game-dir', str(settings.game_dir()), '--runtime-profile', str(profile)]
     data = _invoke(args)
     if action != 'probe':
         app_paths.initialize()

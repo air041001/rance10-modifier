@@ -13,8 +13,11 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'app'))
 import food
 
+PROFILE = dict(CharacterGlobal=11, Food=dict(Offset=0x1000, Length=368,
+    FirstLength=114, SecondOffset=256, GetCharacter=1501, IsMax=1502))
 
-def evaluate(code, *, card_character=42, finished=False):
+
+def evaluate(code, *, card_character=42, finished=False, profile=PROFILE):
     """Small AIN stack fixture. Returned Character/FoodTicketEvent refs are owned.
 
     Implements the instructions used here, including the original double
@@ -23,7 +26,7 @@ def evaluate(code, *, card_character=42, finished=False):
     names = {value: key for key, value in food.OPS.items()}
     arguments = {'PUSH': 1, 'IFZ': 1, 'CALLMETHOD': 1}
     local = {0: 'character-id', 1: -1, 2: -1}
-    global_ = {257: 200}
+    global_ = {profile['CharacterGlobal']: 200}
     refs = {card_character: 1, 300: 1}
     stack, pos, calls = [], 0, []
 
@@ -60,16 +63,16 @@ def evaluate(code, *, card_character=42, finished=False):
             b, a = stack.pop(), stack.pop()
             stack.append(a >= b if name == 'GTE' else a == b)
         elif name == 'IFZ':
-            if not stack.pop(): pos = args[0] - food.BODY_OFFSET
+            if not stack.pop(): pos = args[0] - profile['Food']['Offset']
         elif name == 'CALLMETHOD':
             method_args = [stack.pop() for _ in range(args[0])][::-1]
             method, this = stack.pop(), stack.pop()
             calls.append(method)
-            if method == 27976:
+            if method == profile['Food']['GetCharacter']:
                 assert this == 200 and method_args == ['character-id']
                 result = card_character
                 refs[result] += 1
-            elif method == 28015:
+            elif method == profile['Food']['IsMax']:
                 assert this == 300
                 result = finished
             else: raise AssertionError('Unexpected method: %s' % method)
@@ -102,22 +105,32 @@ class FoodTests(unittest.TestCase):
             self.assertEqual(result.stdout.count(b'PASS '), 5)
 
     def test_target_filters_and_reference_cleanup(self):
-        code = food.make_code(42, 300, bytes(food.BODY_LENGTH))
-        self.assertEqual(len(code), food.BODY_LENGTH)
+        code = food.make_code(42, 300, bytes(PROFILE['Food']['Length']), PROFILE)
+        self.assertEqual(len(code), PROFILE['Food']['Length'])
         for params, expected in [({}, True), ({'card_character': 43}, False), ({'finished': True}, False)]:
             with self.subTest(params=params):
                 self.assertEqual(evaluate(code, **params)[0], expected)
 
     def test_caller_is_preserved_and_finished_fill_is_disabled(self):
         source = bytes(range(256)) + bytes(range(112))
-        code = food.make_code(42, 300, source)
-        self.assertEqual(code[food.FIRST_LENGTH:food.SECOND_OFFSET], source[food.FIRST_LENGTH:food.SECOND_OFFSET])
-        self.assertFalse(evaluate(code[food.SECOND_OFFSET:])[0])
-        self.assertIn(28015, evaluate(code)[1])
+        code = food.make_code(42, 300, source, PROFILE)
+        first, second = PROFILE['Food']['FirstLength'], PROFILE['Food']['SecondOffset']
+        self.assertEqual(code[first:second], source[first:second])
+        self.assertFalse(evaluate(code[second:])[0])
+        self.assertIn(PROFILE['Food']['IsMax'], evaluate(code)[1])
+
+    def test_relocated_predicate_and_method_numbers_are_used(self):
+        profile = dict(CharacterGlobal=57, Food=dict(Offset=0x8750, Length=420,
+            FirstLength=128, SecondOffset=280, GetCharacter=1809, IsMax=1907))
+        source = bytes(i % 256 for i in range(420))
+        code = food.make_code(42, 300, source, profile)
+        self.assertEqual(code[128:280], source[128:280])
+        for params, expected in [({}, True), ({'card_character': 43}, False), ({'finished': True}, False)]:
+            self.assertEqual(evaluate(code, profile=profile, **params)[0], expected)
 
     def test_invalid_live_handle_rejected(self):
         for handle in [-1, 0, 10000000, True, '42']:
-            with self.assertRaises(ValueError): food.make_code(handle, 300, bytes(food.BODY_LENGTH))
+            with self.assertRaises(ValueError): food.make_code(handle, 300, bytes(PROFILE['Food']['Length']), PROFILE)
 
     def test_helper_reply_is_matched_to_request(self):
         session = food.Session()

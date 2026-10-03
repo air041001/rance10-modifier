@@ -33,14 +33,14 @@ def save_fixture():
 
 
 class CompatibilityTests(unittest.TestCase):
-    def test_unknown_executable_allows_directory_but_not_live_writes(self):
+    def test_unreadable_runtime_script_does_not_block_game_directory(self):
         with tempfile.TemporaryDirectory() as folder:
             game = Path(folder)
             for name in game_profile.GAME_HASHES:
                 (game / name).write_bytes(b'other translation')
             self.assertEqual(engine.validate_game_directory(game), game)
             with patch.object(settings, 'game_dir', return_value=game):
-                with self.assertRaisesRegex(ValueError, '实时修改'):
+                with self.assertRaisesRegex(ValueError, '实时功能'):
                     engine.check_live_version()
 
     def test_local_catalog_accepts_different_counts_and_japanese_fields(self):
@@ -117,6 +117,14 @@ class CompatibilityTests(unittest.TestCase):
             '/* 0x02 */ void PlayerCard@0(string id);')
         self.assertEqual(symbols, {1: 'PlayerCard@0', 2: 'PlayerCard@0#1'})
         self.assertIn('PlayerCard@0#1', save_compat.GROUPS['cards'])
+
+    def test_partially_translated_event_keys_follow_initializer_not_language(self):
+        methods = {'CharacterEventCollection@Init': 'S_PUSH "識別名情報.%s.事件"\nRETURN',
+                   'FoodTicketEvent@Init': 'S_PUSH "識別名情報.%s"\nRETURN'}
+        self.assertEqual(save_compat.event_paths(methods),
+                         dict(character_root='識別名情報', event_leaf='事件'))
+        methods['FoodTicketEvent@Init'] = 'S_PUSH "another.%s"\nRETURN'
+        self.assertEqual(save_compat.event_paths(methods), {})
 
     def test_rule_failure_disables_only_affected_feature(self):
         with patch.object(save_compat, 'rules', return_value=dict(cards=False, star=True, enhancement=True)):

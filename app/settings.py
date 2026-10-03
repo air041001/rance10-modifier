@@ -32,7 +32,8 @@ def game_dir():
 
 
 def save_dir():
-    return Path(load().get('save_dir') or app_paths.default_save_dir())
+    config = load()
+    return Path(config.get('save_dir') or app_paths.default_save_dir(config.get('game_dir')))
 
 
 def backup_dir():

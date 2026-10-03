@@ -35,7 +35,7 @@ class TrainingTests(unittest.TestCase):
             character_data.validate({'schema': 1, 'characters': {}})
 
     def test_training_rejects_destination_changed_before_prepare(self):
-        with patch.object(engine, 'check_version'), patch.object(settings, 'save_dir', return_value=Path('expected')), patch.object(training, 'prepare') as prepare:
+        with patch.object(settings, 'save_dir', return_value=Path('expected')), patch.object(training, 'prepare') as prepare:
             with self.assertRaisesRegex(ValueError, '目录'):
                 training.apply(Path('other/LocalSave27.asd'), 'star', 'actor', 50, 'ignored')
             prepare.assert_not_called()
