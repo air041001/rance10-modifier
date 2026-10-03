@@ -4,6 +4,8 @@
 
 支持游玩中补餐券、增加部队点数、指定餐券故事人物，以及带卡面预览的卡牌扩充和人物培养。
 
+当前版本：**v1.4.0**
+
 ## 下载
 
 前往 [Releases](https://github.com/air041001/rance10-modifier/releases) 下载最新 Windows ZIP，完整解压后打开 **兰斯10修改器.exe**。
@@ -54,7 +56,7 @@
 ### 卡牌与培养
 
 先在游戏中保存当前进度，再在修改器里刷新、选择该手动存档，添加卡牌或提高培养数值。
-完成后，在游戏中重新读取修改后的存档。
+完成后，在游戏中重新读取修改后的存档，避免从修改前的游戏画面再次保存覆盖结果。
 
 培养★最高200；同卡强化最高+10；部队总点数最高100，只增不减。
 
@@ -83,8 +85,10 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 .\.venv\Scripts\python.exe app\main.py
 .\.venv\Scripts\python.exe scripts\build.py
+.\.venv\Scripts\python.exe -m unittest discover -s tests -q
 ```
 
 构建产物位于 `dist\Rance10Modifier`，分享包位于 `release`。
+开发时可通过 `RANCE10_MODIFIER_DATA_DIR` 指定独立的数据目录。
 
 [功能研究](docs/feature-research.md) · [开发计划](docs/NEXT_STAGE.md) · [卡牌覆盖](docs/CARD_COVERAGE_AUDIT.md) · [第三方组件](THIRD_PARTY_NOTICES.md)
