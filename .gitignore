@@ -22,6 +22,7 @@ operations.jsonl
 last-error.txt
 catalog.json
 character-info.json
+food-info.json
 item-info.json
 manifest.json
 test-report*.json

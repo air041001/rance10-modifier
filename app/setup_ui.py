@@ -174,6 +174,11 @@ class Setup(ttk.Frame):
             engine.validate_game_directory(game)
             if not Path(saves).is_dir():
                 raise ValueError('没有找到存档目录。请先在游戏中保存一次，或手动选择正确目录。')
+            session = self.owner.training.food_session
+            if session.process and session.process.poll() is None and session.game_dir != str(Path(game).resolve()):
+                session.close()
+                if session.process.poll() is None:
+                    raise ValueError('正在取消原目录游戏的餐券指定，目录尚未更改，请稍后重试。')
             return game, saves, component
         def done(data):
             config = settings.save(*data)

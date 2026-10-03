@@ -23,7 +23,7 @@ def native():
                     '/out:' + str(ROOT / 'resources/LiveValues.exe'),
                     '/r:System.Web.Extensions.dll', '/r:System.Drawing.dll',
                     '/r:System.Windows.Forms.dll', '/r:System.Core.dll',
-                    str(ROOT / 'native/LiveValues.cs')], check=True)
+                    str(ROOT / 'native/LiveValues.cs'), str(ROOT / 'native/FoodSelector.cs')], check=True)
 
 
 def licenses():
@@ -107,7 +107,7 @@ def main():
     with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as output:
         for path in sorted(package.rglob('*')):
             if path.is_file():
-                if path.suffix.lower() in forbidden or path.name in ['alice.exe', 'catalog.json', 'character-info.json', 'item-info.json', 'manifest.json', 'settings.json', 'operations.jsonl', 'last-error.txt']:
+                if path.suffix.lower() in forbidden or path.name in ['alice.exe', 'catalog.json', 'character-info.json', 'item-info.json', 'food-info.json', 'manifest.json', 'settings.json', 'operations.jsonl', 'last-error.txt']:
                     raise RuntimeError('Private or game resource in package: ' + str(path))
                 output.write(path, path.relative_to(package.parent))
     digest = hashlib.sha256(archive.read_bytes()).hexdigest()

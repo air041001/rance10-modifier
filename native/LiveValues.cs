@@ -36,6 +36,14 @@ internal static class Native {
     [DllImport("kernel32.dll", SetLastError = true)]
     internal static extern bool WriteProcessMemory(IntPtr handle, IntPtr address,
         byte[] buffer, UIntPtr length, out UIntPtr written);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    internal static extern IntPtr OpenThread(uint access, bool inherit, int id);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    internal static extern uint Wow64SuspendThread(IntPtr thread);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    internal static extern uint ResumeThread(IntPtr thread);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    internal static extern bool Wow64GetThreadContext(IntPtr thread, [In, Out] byte[] context);
 }
 
 internal sealed class Connection : IDisposable {
@@ -106,7 +114,7 @@ internal static class Engine {
     const int GlobalBytes = 361 * 4;
     const int PlayerGlobalIndex = 256;
 
-    static GlobalsPage CheckGlobals(Connection c, uint owner) {
+    internal static GlobalsPage CheckGlobals(Connection c, uint owner) {
         if (owner < 0x1000c || owner > 0xffffffdf) return null;
         byte[] meta = c.Read(owner - 12, 44);
         if (meta == null || BitConverter.ToUInt32(meta, 0) != c.ModuleBase + 0x399024 ||
@@ -164,7 +172,7 @@ internal static class Engine {
         return new LiveObject { Owner = owner, Data = data, Values = values, Globals = globals, IsBonus = bonus };
     }
 
-    static bool SameGlobals(GlobalsPage a, GlobalsPage b) {
+    internal static bool SameGlobals(GlobalsPage a, GlobalsPage b) {
         return a != null && b != null && a.Owner == b.Owner && a.Data == b.Data &&
             a.Context == b.Context && a.PlayerHandle == b.PlayerHandle && a.BonusHandle == b.BonusHandle;
     }
@@ -179,7 +187,7 @@ internal static class Engine {
         return player;
     }
 
-    static LiveObject Locate(Connection c, bool bonus) {
+    internal static LiveObject Locate(Connection c, bool bonus) {
         int expectedBytes = bonus ? 12 : 48;
         // Scan anew on each manual action; no stale address survives a load or restart.
         var globalPages = new Dictionary<uint, GlobalsPage>();
@@ -296,6 +304,7 @@ internal static class Engine {
 internal static class Program {
     [STAThread]
     static int Main(string[] args) {
+        if (args.Contains("--food-watch")) return FoodSelector.Watch(args);
         int exit = 0; Dictionary<string, object> result;
         try {
             string action = "probe"; int amount = 0;

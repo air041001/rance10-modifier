@@ -4,6 +4,7 @@ from tkinter import ttk, messagebox
 import app_paths
 import engine
 import training
+import food
 from ui_theme import FONT, GREEN, MUTED, surface, ScrollBody, LibraryGate
 
 
@@ -13,6 +14,7 @@ class Training(ttk.Frame):
         self.owner = owner
         self.context, self.saves, self.rows = None, [], []
         self.active, self.photo, self.loaded = None, None, False
+        self.food_session = food.Session(self.food_changed)
         self.content = ttk.Frame(self)
         self.content.pack(fill="both", expand=True)
         top = surface(self.content, 12)
@@ -23,7 +25,10 @@ class Training(ttk.Frame):
         self.savebox.bind('<<ComboboxSelected>>', lambda e: self.load_selected())
         self.refresh_button = ttk.Button(top, text='刷新存档', command=self.refresh)
         self.refresh_button.pack(side='left', padx=(10, 0))
-        ttk.Label(self.content, text='选择已保存的进度。培养修改会备份原档，重新读档后生效。',
+        self.live_button = ttk.Button(top, text='读取当前游戏', command=self.load_live)
+        self.live_button.pack(side='left', padx=(10, 0))
+        self.source_hint = tk.StringVar(value='选择存档可修改培养；读取当前游戏可直接指定餐券人物，无需保存。')
+        ttk.Label(self.content, textvariable=self.source_hint,
                   style='Hint.TLabel').pack(anchor='w', pady=(9, 12))
 
         center = ttk.Panedwindow(self.content, orient='horizontal')
@@ -97,11 +102,67 @@ class Training(ttk.Frame):
         ttk.Label(detail, text='餐券小故事 · 进度与条件', style='CardTitle.TLabel').pack(anchor='w')
         self.story_text = ttk.Label(detail, text='选择人物后查看。', style='Surface.TLabel', justify='left', wraplength=530)
         self.story_text.pack(fill='x', pady=(10, 8))
-        ttk.Label(detail, text='这里读取存档进度；条件是否满足仍由游戏判断。指定候选尚未开放。',
+        ttk.Label(detail, text='指定时会重新读取运行中的持有人物和故事进度。游戏按下一段剧情条件决定是否出现。',
+                  style='SurfaceHint.TLabel', wraplength=530).pack(anchor='w')
+        row = ttk.Frame(detail, style='Surface.TFrame')
+        row.pack(fill='x', pady=(0, 10))
+        self.food_button = ttk.Button(row, text='指定战后餐券人物', style='Primary.TButton', command=self.arm_food)
+        self.food_button.pack(side='left')
+        self.cancel_food_button = ttk.Button(row, text='取消指定', command=self.cancel_food)
+        self.cancel_food_button.pack(side='left', padx=(12, 0))
+        self.food_status = ttk.Label(detail, text=self.food_session.state['message'], style='Surface.TLabel',
+                                     wraplength=530, justify='left')
+        self.food_status.pack(anchor='w', pady=(0, 8))
+        ttk.Label(detail, text='请在战斗结束前指定；已生成的候选不会即时替换。指定期间只出现这个人物。'
+                  '没有符合条件的下一段故事时仍不会出现。取消、换档或关闭工具后恢复随机；地图餐券不受影响。'
+                  '此功能正在游戏验证中，暂只适配已验证的中文版。',
                   style='SurfaceHint.TLabel', wraplength=530).pack(anchor='w')
         self.detail_scroll.bind_children()
+        self.detail_scroll.body.bind('<Configure>', self.wrap_detail, add='+')
         self.gate = LibraryGate(self, self.content, owner, self.refresh)
         self.update_actions()
+        self.after(200, self.poll_food)
+
+    def wrap_detail(self, event):
+        width = max(240, event.width - 6)
+        if getattr(self, '_detail_wrap_width', None) == width:
+            return
+        self._detail_wrap_width = width
+        for widget in self.detail_scroll.body.winfo_children():
+            if isinstance(widget, ttk.Label) and int(widget.cget('wraplength') or 0) > 0:
+                widget.configure(wraplength=width)
+
+    def poll_food(self):
+        self.food_session.poll()
+        self.after(200, self.poll_food)
+
+    def food_changed(self, state):
+        self.food_status.configure(text=state['message'], foreground=GREEN if state.get('success', True) else MUTED)
+        self.update_actions()
+
+    def arm_food(self):
+        if self.active and not self.owner.busy:
+            target = self.active
+            self.owner.run(lambda: self.food_session.arm(target), self.food_changed,
+                           '正在指定战后餐券人物…')
+
+    def load_live(self):
+        if not self.owner.busy:
+            self.owner.run(self.food_session.inspect, self.live_loaded, '正在读取当前游戏人物与故事进度…')
+
+    def live_loaded(self, context):
+        self.savebox.set('当前运行进度 · 餐券人物')
+        self.source_hint.set('当前游戏名单。餐券指定即时生效；修改★或强化请另选存档。')
+        self.context = context
+        self.rows = context['training_cards']
+        self.filter()
+        with_story = sum(bool(rows[0]['story'] and rows[0]['story']['maximum']) for rows in self.characters.values())
+        self.owner.status.configure(text='已读取当前游戏：%d 位人物，%d 位有餐券故事资料。' % (len(self.characters), with_story))
+        self.update_actions()
+
+    def cancel_food(self):
+        if not self.owner.busy:
+            self.owner.run(self.food_session.cancel, self.food_changed, '正在恢复随机餐券候选…')
 
     def invalidate(self):
         self.gate.ready()
@@ -161,6 +222,7 @@ class Training(ttk.Frame):
 
     def context_loaded(self, context):
         self.context = context
+        self.source_hint.set('当前名单来自存档。培养修改须重新读档；餐券指定会另外核对当前游戏。')
         self.rows = context['training_cards']
         self.filter()
         self.owner.status.configure(text='%d号存档 · 人物培养与餐券故事已读取。' % context['slot'])
@@ -226,7 +288,7 @@ class Training(ttk.Frame):
                              ('\n    条件：' + label) if event['state'] != '无此故事' else ''))
             self.story_text.configure(text='\n\n'.join(lines))
         else:
-            self.story_text.configure(text='本机资料缺少这个人物的餐券条件，未推测故事状态。')
+            self.story_text.configure(text='本机游戏数据中未找到这个人物的餐券故事资料，不能指定。')
         self.show_card()
         if changed:
             self.detail_scroll.reset()
@@ -254,11 +316,14 @@ class Training(ttk.Frame):
             self.gate.update_actions()
         busy, context = self.owner.busy, self.context
         self.refresh_button.configure(state='disabled' if busy else 'normal')
+        self.live_button.configure(state='disabled' if busy else 'normal')
         self.savebox.configure(state='disabled' if busy else 'readonly')
         self.variant.configure(state='disabled' if busy else 'readonly')
         can_write = bool(context and context['manual'] and not context['pending'] and self.card() and not busy)
         self.star_button.configure(state='normal' if can_write else 'disabled')
         self.enhancement_button.configure(state='normal' if can_write else 'disabled')
+        self.food_button.configure(state='normal' if self.active and not busy else 'disabled')
+        self.cancel_food_button.configure(state='normal' if self.food_session.state.get('armed') and not busy else 'disabled')
 
     def apply(self, kind):
         row = self.card()

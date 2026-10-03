@@ -166,7 +166,7 @@ class App(tk.Tk):
     def tab_changed(self, event=None):
         titles = {str(self.numbers): ('餐券与部队点数', '游戏运行时修改，点击后即时生效'),
                   str(self.cards): ('卡牌扩充', '查看卡面与技能，按存档选择要添加的卡牌'),
-                  str(self.training): ('人物培养', '提高人物★与同卡强化，查看餐券小故事条件'),
+                  str(self.training): ('人物培养与餐券故事', '存档培养 · 当前游戏人物 · 指定战后餐券候选'),
                   str(self.records): ('记录与备份', '查看修改记录，找到添加卡牌前的原始存档'),
                   str(self.setup): ('设置与图鉴', '选择你的游戏目录，准备本机卡牌图鉴')}
         title, hint = titles[self.tabs.select()]
@@ -229,7 +229,10 @@ class App(tk.Tk):
         if self.busy:
             self.status.configure(text='正在完成操作，请完成后关闭窗口。')
             return
-        self.destroy()
+        if self.training.food_session.process and self.training.food_session.process.poll() is None:
+            self.run(self.training.food_session.close, lambda result: self.destroy(), '正在取消餐券指定并关闭…')
+        else:
+            self.destroy()
 
 
 if __name__ == '__main__':
@@ -248,5 +251,12 @@ if __name__ == '__main__':
         app_paths.initialize()
         app_paths.ERROR_FILE.write_text(error, encoding='utf-8-sig')
         if '--self-test' in sys.argv:
-            raise
+            if '--output' in sys.argv:
+                try:
+                    output = Path(sys.argv[sys.argv.index('--output') + 1])
+                    output.write_text(json.dumps({'self_test_failed': True, 'error': error},
+                                                 ensure_ascii=False, indent=2), encoding='utf-8')
+                except (IndexError, OSError):
+                    pass
+            sys.exit(1)
         ctypes.windll.user32.MessageBoxW(None, '启动失败，错误详情保存在：\n' + str(app_paths.ERROR_FILE) + '\n' + error[-600:], '兰斯10修改器', 16)

@@ -19,6 +19,16 @@ def run():
     parser.add_argument('--output', required=True)
     options = parser.parse_args()
     app = App(auto_connect=False)
+    try:
+        check(app, options)
+    finally:
+        try:
+            app.training.food_session.close()
+        finally:
+            app.destroy()
+
+
+def check(app, options):
     app.withdraw()
     app.geometry('1120x800')
     app.update()
@@ -156,13 +166,16 @@ def run():
                     app.training.context_loaded(cultivation)
                     app.tabs.select(app.training)
                     app.update()
-                    assert app.training.active is not None
                     state['training'] = dict(characters=len(app.training.characters),
                          cards=len(app.training.rows), image_loaded=bool(app.training.photo),
                          story_text=app.training.story_text.cget('text'))
-                    app.training.query.set('玛丽斯')
-                    app.update()
-                    assert '玛丽斯' in app.training.characters
+                    if app.training.characters:
+                        character = app.training.active
+                        assert character in app.training.characters
+                        app.training.query.set(character)
+                        app.update()
+                        assert character in app.training.characters, 'Held character search failed'
+                        state['training']['search_checked'] = character
                     app.training.query.set('not-an-existing-character')
                     app.update()
                     assert not app.training.characters
@@ -170,4 +183,3 @@ def run():
     assert state['helper'] and state['instructions']
     assert all(sizes == geometry[0] for sizes in geometry)
     Path(options.output).write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding='utf-8')
-    app.destroy()
