@@ -102,7 +102,7 @@ class FoodTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout.decode(errors='replace'))
             result = subprocess.run([str(executable)], capture_output=True, timeout=15)
             self.assertEqual(result.returncode, 0, result.stderr.decode(errors='replace'))
-            self.assertEqual(result.stdout.count(b'PASS '), 5)
+            self.assertEqual(result.stdout.count(b'PASS '), 8)
 
     def test_target_filters_and_reference_cleanup(self):
         code = food.make_code(42, 300, bytes(PROFILE['Food']['Length']), PROFILE)
@@ -145,6 +145,23 @@ class FoodTests(unittest.TestCase):
         session.process = Process()
         with patch.object(session, 'start'):
             self.assertFalse(session.request(dict(action='cancel'))['armed'])
+
+    def test_later_load_event_is_not_replaced_by_earlier_reply(self):
+        session = food.Session()
+        class Input:
+            def write(self, line):
+                command = json.loads(line)
+                session.state = dict(armed=False, revision=2, reason='changed')
+                session.answers.put(dict(request_id=command['request_id'], success=True, armed=True, revision=1))
+            def flush(self):
+                pass
+        class Process:
+            stdin = Input()
+        session.process = Process()
+        with patch.object(session, 'start'):
+            session.request(dict(action='arm'))
+        self.assertFalse(session.state['armed'])
+        self.assertEqual(session.state['reason'], 'changed')
 
     def test_current_game_preflight_does_not_write_stale_save_target(self):
         session = food.Session()

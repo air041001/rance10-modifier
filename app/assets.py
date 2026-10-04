@@ -340,6 +340,11 @@ def prepare_library(game, local_tool='', allow_download=False, progress=lambda m
                 if match:
                     assets[match[2]] = dict(index=int(match[1]), archive=archive)
 
+        import game_icons
+        try:
+            game_icons.prepare_from_assets(tool, game, assets, encoding)
+        except (OSError, ValueError):
+            pass  # Optional sprites never prevent preparing the card library.
         entries, missing = {}, []
         for row in data['cards']:
             if not engine.displayable(row):

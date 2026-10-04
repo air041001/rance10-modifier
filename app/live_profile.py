@@ -191,6 +191,16 @@ def describe(ain, include_food=True):
         if len(matches) != 1 or matches[0]['type'][0] != 13 or matches[0]['type'][1] != structures[expected_type]['index']:
             raise ValueError('实时全局对象需要适配：' + name)
         result[key] = matches[0]['index']
+    # Optional display metadata. Unknown chapter layouts never gate resource edits.
+    result['GameGlobal'] = -1
+    context = structures.get('GameContext')
+    matches = [g for g in ain['globals'] if g['name'] == 'g_gameContext']
+    if context and len(matches) == 1 and matches[0]['type'][:2] == (13, context['index']):
+        chapter = [(i, m) for i, m in enumerate(context['members']) if m['name'] == 'm_chapter']
+        if len(chapter) == 1 and chapter[0][1]['type'][0] == 92:
+            result['GameGlobal'] = matches[0]['index']
+            fields['GameContext'] = [chapter[0][0]]
+            counts['GameContext'] = len(context['members'])
     return result
 
 
@@ -289,7 +299,7 @@ def prepare(game):
             codepage = {'CP936': 936, 'CP932': 932}[catalog['source']['encoding']]
     except (OSError, ValueError, KeyError):
         pass
-    identity = hashlib.sha256(('%s:%s:%d:3' % (ain_hash, exe_hash, codepage)).encode()).hexdigest()
+    identity = hashlib.sha256(('%s:%s:%d:4' % (ain_hash, exe_hash, codepage)).encode()).hexdigest()
     folder = app_paths.CACHE_DIR / 'live-profiles'
     target = folder / (identity + '.json')
     if target.is_file():

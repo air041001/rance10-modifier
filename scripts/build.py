@@ -56,10 +56,10 @@ def licenses():
 
 
 def icon_and_version():
-    image = Image.new('RGBA', (256, 256), '#192536')
+    image = Image.new('RGBA', (256, 256), '#171b20')
     draw = ImageDraw.Draw(image)
-    draw.rounded_rectangle((15, 15, 241, 241), radius=44, fill='#2b3d55')
-    draw.rounded_rectangle((34, 185, 222, 199), radius=7, fill='#6c9dff')
+    draw.rounded_rectangle((15, 15, 241, 241), radius=44, fill='#252b33')
+    draw.rounded_rectangle((34, 185, 222, 199), radius=7, fill='#c4a46b')
     face = ImageFont.truetype(str(Path(os.environ['WINDIR']) / 'Fonts/segoeuib.ttf'), 112)
     draw.text((128, 105), 'RX', font=face, fill='#e8c57e', anchor='mm')
     image.save(ROOT / 'resources/app.ico', sizes=[(16,16),(32,32),(48,48),(64,64),(128,128),(256,256)])

@@ -18,10 +18,17 @@ internal sealed class FoodProfile {
 
 internal sealed class RuntimeProfile {
     public int Schema, GlobalCount, PlayerGlobal, BonusGlobal, CharacterGlobal, CardGlobal, CodeLength, CodePage;
+    public int GameGlobal = -1;
     public string AinHash, ExeHash, CodeHash, FoodError;
     public Dictionary<string,int[]> Fields;
     public Dictionary<string,int> Counts;
     public FoodProfile Food;
+
+    internal static int? DisplayChapter(int value) {
+        // GameChapter::Parse maps Chapter1 to 0 and Chapter2 to 1.
+        // The enum dump lists ordinal positions, not these runtime values.
+        return value == 0 ? (int?)1 : value == 1 ? (int?)2 : null;
+    }
 
     internal static string Hash(byte[] data) {
         using (SHA256 sha = SHA256.Create())

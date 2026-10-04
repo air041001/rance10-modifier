@@ -396,15 +396,19 @@ def list_saves(save_dir=None):
     for path in Path(save_dir).glob('LocalSave*.asd'):
         if not re.fullmatch(r'LocalSave\d+\.asd', path.name):
             continue
+        mtime = 0
         try:
+            mtime = path.stat().st_mtime
             s = parse(path.read_bytes(), str(path))
             m = metadata(s)
             count = len(collection(s)[2])
             result.append(dict(path=str(path), slot=m['slot'], time=m['time'], comment=m['comment'],
-                               count=count, manual=m['slot'] < 5000, mtime=path.stat().st_mtime))
+                               count=count, manual=m['slot'] < 5000, mtime=mtime))
+        except FileNotFoundError:
+            continue  # The game may replace a save between directory scan and read.
         except Exception as exc:
             result.append(dict(path=str(path), slot=-1, time='', comment=str(exc), count=0,
-                               manual=False, mtime=path.stat().st_mtime, error=True))
+                               manual=False, mtime=mtime, error=True))
     return sorted(result, key=lambda x: x['mtime'], reverse=True)
 
 

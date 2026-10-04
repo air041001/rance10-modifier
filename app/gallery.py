@@ -6,7 +6,7 @@ from tkinter import ttk
 from PIL import Image, ImageTk
 import engine
 import app_paths
-from ui_theme import BG, TEXT, MUTED, LINE, BLUE, TINT, GOLD, FONT
+from ui_theme import BG, SURFACE, TEXT, MUTED, LINE, BLUE, TINT, GOLD, FONT, CONTROL, ACCENT_TEXT
 
 
 class Images:
@@ -113,16 +113,16 @@ class Gallery(ttk.Frame):
             x, y = gutter + (index % self.cols) * self.W, (index // self.cols) * self.H
             checked = r['id'] in self.selected
             tags = ('card', 'i%d' % index)
-            outline = BLUE if checked else ('#9fb7dc' if r['id'] == self.active else LINE)
-            fill = TINT if checked else 'white'
+            outline = BLUE if checked or r['id'] == self.active else LINE
+            fill = TINT if checked else SURFACE
             self.rounded(x + 5, y + 4, x + self.W - 5, y + self.H - 6,
-                         radius=8, fill=fill, outline=outline, width=2 if checked else 1, tags=tags)
+                         radius=3, fill=fill, outline=outline, width=2 if checked else 1, tags=tags)
             image = self.images.get(r['id'])
             if image:
                 self.photos.append(image)
                 self.canvas.create_image(x + self.W // 2, y + 16, image=image, anchor='n', tags=tags)
             else:
-                self.canvas.create_rectangle(x + 17, y + 16, x + 153, y + 220, fill='#e8eef6', outline='', tags=tags)
+                self.canvas.create_rectangle(x + 17, y + 16, x + 153, y + 220, fill=CONTROL, outline='', tags=tags)
                 self.canvas.create_text(x + self.W // 2, y + 113, text='暂无卡面', fill=MUTED, font=(FONT, 10), tags=tags)
             self.canvas.create_text(x + self.W // 2, y + 230, text=r['id'], width=146,
                                     font=(FONT, 9, 'bold'), fill=TEXT, anchor='n', tags=tags)
@@ -138,9 +138,9 @@ class Gallery(ttk.Frame):
                 self.canvas.create_text(x + 37, y + 23, text=label, fill='white', font=(FONT, 8), tags=tags)
             else:
                 self.rounded(x + 12, y + 12, x + 36, y + 36, radius=4,
-                             fill=BLUE if checked else 'white', outline=BLUE, width=1, tags=tags)
+                             fill=BLUE if checked else SURFACE, outline=BLUE, width=1, tags=tags)
                 if checked:
-                    self.canvas.create_text(x + 24, y + 24, text='✓', fill='white', font=('Segoe UI', 12, 'bold'), tags=tags)
+                    self.canvas.create_text(x + 24, y + 24, text='✓', fill=ACCENT_TEXT, font=('Segoe UI', 12, 'bold'), tags=tags)
 
     def rounded(self, x1, y1, x2, y2, radius=8, **options):
         r = radius

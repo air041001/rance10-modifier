@@ -271,16 +271,19 @@ internal static class Engine {
             int[] oldFood = (int[])food.Values.Clone(), oldBonus = (int[])bonus.Values.Clone();
             int writes = 0;
             if (writing) {
-                bool targetBonus = action != "fill3";
+                bool targetBonus = action == "setpoints" || action == "addpoints" || action == "verify-write";
                 LiveObject target = targetBonus ? bonus : food;
-                int field = targetBonus ? 2 : 0;
+                int field = targetBonus || action == "fillfriend3" ? 2 : 0;
                 int value = 3;
                 if (action == "addpoints") {
                     if (amount < 1 || amount > 50) throw new InvalidOperationException("每次增加1到50点。");
                     value = checked(target.Values[2] + amount);
                 } else if (action == "setpoints") value = amount;
                 else if (action == "verify-write") value = target.Values[field];
-                else if (action != "fill3") throw new InvalidOperationException("未知操作。");
+                else if (action != "fill3" && action != "fillfriend3") throw new InvalidOperationException("未知操作。");
+                // A modified game can already hold more than three friendship
+                // points. Refill never reduces that independent resource.
+                if (action == "fillfriend3") value = Math.Max(value, target.Values[field]);
                 if (targetBonus && (value < target.Values[2] || value > 100))
                     throw new InvalidOperationException("总点数只能增加，最高100；当前总点数为" + target.Values[2] + "。");
                 LiveObject fresh = Confirm(c, target);
@@ -300,14 +303,29 @@ internal static class Engine {
                         throw new InvalidOperationException("游戏同时更新了其他数值，请刷新并查看游戏。");
                 if (targetBonus) bonus = after; else food = after;
             }
+            int? chapter = null;
+            int? rawChapter = null;
+            if (c.Profile.GameGlobal >= 0 && c.Profile.GameGlobal < c.Profile.GlobalCount &&
+                c.Profile.Fields.ContainsKey("GameContext")) {
+                try {
+                    var vm = new VmPages(c, food.Globals);
+                    int value = vm.Record(vm.Global(c.Profile.GameGlobal), "GameContext")[0];
+                    if (SameGlobals(food.Globals, CheckGlobals(c, food.Globals.Owner))) {
+                        rawChapter = value;
+                        chapter = RuntimeProfile.DisplayChapter(value);
+                    }
+                } catch (InvalidOperationException) { /* Only the chapter label is optional. */ }
+            }
             return new Dictionary<string, object> {
                 {"success", true}, {"version", "1.0"}, {"action", action}, {"save_required", false},
-                {"pid", c.Process.Id}, {"food", food.Values[0]}, {"total_points", bonus.Values[2]},
+                {"pid", c.Process.Id}, {"chapter", chapter}, {"chapter_raw", rawChapter}, {"session", c.Session},
+                {"food", food.Values[0]}, {"friend_points", food.Values[2]}, {"total_points", bonus.Values[2]},
                 {"food_before", oldFood}, {"food_after", food.Values},
                 {"bonus_before", oldBonus}, {"bonus_after", bonus.Values},
                 {"food_address", "0x" + food.Data.ToString("x")},
                 {"bonus_address", "0x" + bonus.Data.ToString("x")},
                 {"global_owner", "0x" + food.Globals.Owner.ToString("x")},
+                {"player_owner", "0x" + food.Owner.ToString("x")},
                 {"writes", writes}, {"time", DateTime.Now.ToString("s")}
             };
         }
@@ -322,6 +340,7 @@ internal static class Program {
         try {
             string action = "probe"; int amount = 0;
             if (args.Contains("--fill3")) action = "fill3";
+            if (args.Contains("--fillfriend3")) action = "fillfriend3";
             foreach (string candidate in new string[] { "setpoints", "addpoints", "verify-write" }) {
                 int pos = Array.IndexOf(args, "--" + candidate);
                 if (pos < 0) continue;

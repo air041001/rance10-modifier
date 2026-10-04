@@ -28,7 +28,7 @@ def discover():
 
 
 def run(action='probe', amount=None):
-    if action not in ['probe', 'fill3', 'setpoints', 'addpoints']:
+    if action not in ['probe', 'fill3', 'fillfriend3', 'setpoints', 'addpoints']:
         raise ValueError('不支持的操作。')
     profile = engine.check_live_version()
     args = ['--' + action]

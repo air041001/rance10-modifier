@@ -11,7 +11,7 @@ from ui_theme import BG, SURFACE, TEXT, MUTED, LINE, BLUE, TINT, GOLD, FONT, sur
 
 class Cards(ttk.Frame):
     def __init__(self, master, owner):
-        super().__init__(master, padding=(24, 18, 24, 16))
+        super().__init__(master, padding=(20, 16))
         self.owner = owner
         self.context, self.saves, self.selected, self.visible = None, [], set(), []
         self.active, self.preview_photo, self.loaded = None, None, False
@@ -43,6 +43,7 @@ class Cards(ttk.Frame):
         self.goal_value.trace_add('write', lambda *a: self.update_actions())
 
         filters = ttk.Frame(self.content)
+        self.filters = filters
         filters.pack(fill='x', pady=(0, 6))
         filters.columnconfigure(0, weight=1)
         self.query = tk.StringVar()
@@ -65,6 +66,7 @@ class Cards(ttk.Frame):
         self.versionbox.grid(row=0, column=3)
         self.versionbox.bind('<<ComboboxSelected>>', lambda e: self.filter())
         extra = ttk.Frame(filters)
+        self.extra_filters = extra
         extra.grid(row=1, column=0, columnspan=4, sticky='w', pady=(8, 0))
         self.kind = tk.StringVar(value='全部类型')
         self.kindbox = ttk.Combobox(extra, values=['全部类型', '人物', '通用', '物品'],
@@ -76,6 +78,7 @@ class Cards(ttk.Frame):
                        textvariable=self.appearance, state='readonly', width=14, font=(FONT, 10))
         self.appearancebox.pack(side='left')
         self.appearancebox.bind('<<ComboboxSelected>>', lambda e: self.filter())
+        filters.bind('<Configure>', self.layout_filters)
         checks = ttk.Frame(self.content)
         checks.pack(fill='x', pady=(0, 10))
         ttk.Label(checks, text='卡名 / 技能', style='Hint.TLabel').pack(side='left', padx=(0, 18))
@@ -121,8 +124,8 @@ class Cards(ttk.Frame):
         scrollbar.pack(side='right', fill='y')
         self.tree.pack(side='left', fill='both', expand=True)
         self.tree.tag_configure('checked', background=TINT)
-        self.tree.tag_configure('owned', foreground='#8a96a7')
-        self.tree.tag_configure('unavailable', foreground='#8a96a7')
+        self.tree.tag_configure('owned', foreground=MUTED)
+        self.tree.tag_configure('unavailable', foreground=MUTED)
         self.tree.bind('<<TreeviewSelect>>', self.list_detail)
         self.tree.bind('<Button-1>', self.list_click)
         self.tree.bind('<Double-1>', self.list_double)
@@ -149,6 +152,25 @@ class Cards(ttk.Frame):
         self.bind('<Configure>', lambda e: self.hint.configure(wraplength=max(400, e.width - 48)))
         self.gate = LibraryGate(self, self.content, owner, self.refresh)
         self.update_actions()
+
+    def theme_changed(self):
+        self.tree.tag_configure('checked', background=TINT)
+        self.tree.tag_configure('owned', foreground=MUTED)
+        self.tree.tag_configure('unavailable', foreground=MUTED)
+        self.gallery.canvas.configure(bg=BG)
+        self.gallery.schedule()
+
+    def layout_filters(self, event):
+        narrow = event.width < 820
+        if getattr(self, '_narrow_filters', None) == narrow:
+            return
+        self._narrow_filters = narrow
+        self.search.grid_configure(row=0, column=0, columnspan=3 if narrow else 1,
+                                   sticky='ew', padx=(0, 0 if narrow else 10), pady=(0, 8 if narrow else 0))
+        for index, box in enumerate([self.factionbox, self.raritybox, self.versionbox]):
+            box.grid_configure(row=1 if narrow else 0, column=index if narrow else index+1,
+                               sticky='w' if narrow else 'ew', padx=(0, 10))
+        self.extra_filters.grid_configure(row=2 if narrow else 1, columnspan=3 if narrow else 4)
 
     def refresh(self):
         self.context = None

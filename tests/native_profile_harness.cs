@@ -43,6 +43,10 @@ internal static class Harness {
         byte[] ambiguous=Image(0x400000,0);Put(ambiguous,2200,0x400000+208);Put(ambiguous,2204,0x400000+3500);
         rejected=false;try{RuntimeTypes.Decode(ambiguous,0x400000);}catch(InvalidOperationException){rejected=true;}
         Assert(rejected,"ambiguous objects are not written");
+        Assert(RuntimeProfile.DisplayChapter(0)==1 && RuntimeProfile.DisplayChapter(1)==2,
+            "zero based runtime chapters use the correct display labels");
+        Assert(RuntimeProfile.DisplayChapter(-1)==null && RuntimeProfile.DisplayChapter(2)==null,
+            "unknown chapters are not labelled as the first or second part");
         return 0;
     }
 }

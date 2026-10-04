@@ -17,6 +17,7 @@ from gallery import Images
 from numbers_ui import Numbers
 from cards_ui import Cards
 from training_ui import Training
+import ui_theme
 from ui_theme import BG, SURFACE, TEXT, MUTED, LINE, NAV, FONT, GREEN, RED, PageDeck, configure_styles
 
 
@@ -24,53 +25,59 @@ class App(tk.Tk):
     def __init__(self, auto_connect=True):
         app_paths.initialize()
         super().__init__()
+        ui_theme.set_palette(settings.load().get('theme', 'dark'))
         self.title('兰斯10修改器 · v' + VERSION)
-        self.geometry('1300x880')
-        self.minsize(1120, 800)
+        self.geometry('1280x820')
+        self.minsize(900, 700)
         self.configure(bg=BG)
         icon = app_paths.RESOURCE_DIR / 'app.ico'
         if icon.is_file():
             self.iconbitmap(default=str(icon))
         self.busy, self.backup = False, None
+        self._connected = False
         self.mailbox = queue.Queue()
         self.progress_mailbox = queue.Queue()
+        self.cosmetics = queue.Queue()
         self.protocol('WM_DELETE_WINDOW', self.close)
         # A global *Font option overrides ttk's section and value styles.
         # Use explicit ttk styles so headings and numeric values retain their size.
         self.style()
 
-        sidebar = tk.Frame(self, bg=NAV, width=190)
+        sidebar = tk.Frame(self, bg=NAV, width=180)
         sidebar.pack(side='left', fill='y')
         sidebar.pack_propagate(False)
-        brand = tk.Frame(sidebar, bg=NAV, padx=20, pady=28)
+        brand = tk.Frame(sidebar, bg=NAV, padx=20, pady=24)
         brand.pack(fill='x')
-        tk.Label(brand, text='RANCE X', font=('Georgia', 21, 'bold'), bg=NAV, fg='#e8c57e', anchor='w').pack(fill='x')
-        tk.Label(brand, text='兰斯10修改器', font=(FONT, 11), bg=NAV, fg='#c6d1e0', anchor='w').pack(fill='x', pady=(9, 0))
+        tk.Label(brand, text='RANCE X', font=('Segoe UI', 19, 'bold'), bg=NAV, fg=ui_theme.BLUE, anchor='w').pack(fill='x')
+        tk.Label(brand, text='兰斯10修改器', font=(FONT, 10), bg=NAV, fg=TEXT, anchor='w').pack(fill='x', pady=(6, 0))
         navigation = tk.Frame(sidebar, bg=NAV, padx=9)
         navigation.pack(fill='x', pady=(10, 0))
         info = tk.Frame(sidebar, bg=NAV, padx=20, pady=22)
         info.pack(side='bottom', fill='x')
-        tk.Frame(info, bg='#35445a', height=1).pack(fill='x', pady=(0, 18))
+        tk.Frame(info, bg=LINE, height=1).pack(fill='x', pady=(0, 18))
         tk.Label(info, text='即时数值  ·  按需修改\n卡牌扩充  ·  读档生效', font=(FONT, 9),
-                 bg=NAV, fg='#9aacc3', justify='left', anchor='w').pack(fill='x')
+                 bg=NAV, fg=MUTED, justify='left', anchor='w').pack(fill='x')
         tk.Label(info, text='本地工具  /  v' + VERSION, font=(FONT, 8), bg=NAV,
-                 fg='#74859d', anchor='w').pack(fill='x', pady=(16, 0))
+                 fg=MUTED, anchor='w').pack(fill='x', pady=(16, 0))
 
         workspace = tk.Frame(self, bg=BG)
         workspace.pack(side='left', fill='both', expand=True)
-        header = tk.Frame(workspace, bg=SURFACE, padx=26, pady=17)
+        header = tk.Frame(workspace, bg=BG, padx=20, pady=18)
         header.pack(fill='x')
-        heading = tk.Frame(header, bg=SURFACE)
-        heading.pack(side='left', fill='x', expand=True)
-        self.page_title = tk.Label(heading, text='餐券与部队点数', font=(FONT, 20, 'bold'),
-                                  bg=SURFACE, fg=TEXT, anchor='w')
+        header.columnconfigure(0, weight=1)
+        heading = tk.Frame(header, bg=BG)
+        heading.grid(row=0, column=0, sticky='ew')
+        self.page_title = tk.Label(heading, text='游玩中修改', font=(FONT, 16, 'bold'),
+                                  bg=BG, fg=TEXT, anchor='w')
         self.page_title.pack(fill='x')
-        self.page_hint = tk.Label(heading, text='游戏运行时修改，点击后即时生效', font=(FONT, 10),
-                                 bg=SURFACE, fg=MUTED, anchor='w')
+        self.page_hint = tk.Label(heading, text='当前游戏的资源与部队加成', font=(FONT, 9),
+                                 bg=BG, fg=MUTED, anchor='w', wraplength=600)
         self.page_hint.pack(fill='x', pady=(5, 0))
-        self.connection = tk.Label(header, text='●  等待实时连接', font=(FONT, 9),
-                                   bg='#edf2f7', fg=MUTED, padx=14, pady=9)
-        self.connection.pack(side='right', padx=(12, 0))
+        self.theme_button = ttk.Button(header, text='浅色' if ui_theme.MODE == 'dark' else '深色', command=self.toggle_theme)
+        self.theme_button.grid(row=0, column=2, padx=(12, 0))
+        self.connection = tk.Label(header, text='●  等待连接', font=(FONT, 9), bg=BG, fg=MUTED)
+        self.connection.grid(row=0, column=1, padx=(12, 0))
+        heading.bind('<Configure>', lambda e: self.page_hint.configure(wraplength=max(240, e.width)))
         tk.Frame(workspace, bg=LINE, height=1).pack(fill='x')
         self.images = Images(self)
         self.tabs = PageDeck(workspace, navigation)
@@ -79,7 +86,7 @@ class App(tk.Tk):
         self.training = Training(self.tabs, self)
         self.records = ttk.Frame(self.tabs, padding=(24, 20))
         self.setup = Setup(self.tabs, self)
-        self.tabs.add(self.numbers, text='游玩中修改', subtitle='餐券与部队点数')
+        self.tabs.add(self.numbers, text='游玩中修改', subtitle='餐券 · 友情 · 点数')
         self.tabs.add(self.cards, text='卡牌扩充', subtitle='选卡 · 图鉴 · 技能')
         self.tabs.add(self.training, text='人物培养', subtitle='★等级 · 强化 · 餐券故事')
         self.tabs.add(self.records, text='记录与备份', subtitle='修改记录与原始存档')
@@ -88,7 +95,7 @@ class App(tk.Tk):
         self.tabs.bind('<<NotebookTabChanged>>', self.tab_changed)
         footer = ttk.Frame(workspace, padding=(24, 8, 24, 10))
         footer.pack(side='bottom', fill='x')
-        self.status = ttk.Label(footer, text='就绪。餐券与点数即时生效，加卡后请重新读档。', style='Hint.TLabel', wraplength=820)
+        self.status = ttk.Label(footer, text='就绪。资源与点数即时生效，加卡后请重新读档。', style='Hint.TLabel', wraplength=820)
         self.status.pack(side='left', fill='x', expand=True)
         self.top = tk.BooleanVar(value=False)
         ttk.Checkbutton(footer, text='保持窗口在最前', variable=self.top,
@@ -97,19 +104,67 @@ class App(tk.Tk):
         tk.Frame(workspace, bg=LINE, height=1).pack(side='bottom', fill='x')
         self.tabs.pack(fill='both', expand=True)
         self.after(100, self.drain)
+        self.after_idle(self.apply_window_theme)
+        self.bind('<Map>', lambda event: self.after_idle(self.apply_window_theme)
+                  if event.widget is self else None)
         if not settings.load().get('game_dir'):
             self.tabs.select(self.setup)
         elif auto_connect:
             self.after(250, self.numbers.refresh)
             self.after(750, self.setup.repair_existing_library)
+        if auto_connect:
+            self.numbers.start_poll()
+            self.prepare_icons()
 
     def style(self):
         self.theme = configure_styles(self)
 
+    def apply_window_theme(self):
+        self.window_theme = ui_theme.apply_window_theme(self)
+
+    def toggle_theme(self, persist=True):
+        old, current = ui_theme.set_palette('light' if ui_theme.MODE == 'dark' else 'dark')
+        ui_theme.recolour(self, old, current)
+        self.style()
+        self.apply_window_theme()
+        self.theme_button.configure(text='浅色' if ui_theme.MODE == 'dark' else '深色')
+        self.set_connection(self._connected)
+        self.tabs.select(self.tabs.select())
+        self.cards.theme_changed()
+        self.numbers.icons.reload()
+        self.numbers.paint_resources()
+        self.numbers.render_story()
+        if persist:
+            settings.save_theme(ui_theme.MODE)
+
+    def prepare_icons(self):
+        game = settings.load().get('game_dir')
+        if not game:
+            return
+        def work():
+            import game_icons
+            try:
+                game_icons.prepare_available(game)
+            except Exception:
+                # Missing optional art uses the matching ticket/gold/friend glyph.
+                pass
+            self.cosmetics.put(game)
+        threading.Thread(target=work, daemon=True).start()
+
+    def show_story_selector(self):
+        if self.busy:
+            return
+        self.training.loaded = True
+        self.training.query.set('')
+        if self.numbers.story_target:
+            self.training.active = self.numbers.story_target['character']
+        self.tabs.select(self.training)
+        self.training.load_live()
+
     def set_connection(self, connected):
-        self.connection.configure(text='●  实时修改已连接' if connected else '●  实时修改未连接',
-                                  fg=GREEN if connected else RED,
-                                  bg='#e9f6f0' if connected else '#fceef0')
+        self._connected = connected
+        self.connection.configure(text='●  游戏已连接' if connected else '●  等待连接',
+                                  fg=ui_theme.GREEN if connected else ui_theme.MUTED, bg=ui_theme.BG)
 
     def build_records(self):
         ttk.Label(self.records, text='每次修改都有记录，加卡与培养修改会自动保留原始存档。', style='Hint.TLabel').pack(anchor='w', pady=(0, 16))
@@ -127,7 +182,7 @@ class App(tk.Tk):
     def refresh_history(self):
         if not hasattr(self, 'history'):
             return
-        lines = []
+        lines, recent = [], []
         path = app_paths.LOG_FILE
         if path.exists():
             for text in path.read_text(encoding='utf-8').splitlines()[-40:]:
@@ -135,7 +190,9 @@ class App(tk.Tk):
                     r = json.loads(text)
                     when = r.get('time', '').replace('T', ' ')
                     if r.get('action') == 'fill3':
-                        summary = '餐券：%s → %s张' % (r['food_before'][0], r['food'])
+                        summary = '餐券 / 金块：%s → %s' % (r['food_before'][0], r['food'])
+                    elif r.get('action') == 'fillfriend3':
+                        summary = '第二部友情：%s → %s点' % (r['food_before'][2], r['friend_points'])
                     elif r.get('action') in ['setpoints', 'addpoints']:
                         summary = '部队总点数：%s → %s' % (r['bonus_before'][2], r['total_points'])
                     elif r.get('action') == 'cards':
@@ -146,13 +203,15 @@ class App(tk.Tk):
                     else:
                         continue
                     lines.append(when + '  ' + summary)
+                    recent.append((when, summary))
                 except (ValueError, KeyError, TypeError):
                     continue
-        content = '\n\n'.join(reversed(lines)) if lines else '本修改器还没有执行修改。\n\n餐券与部队点数：点击按钮后即时生效，随后可正常保存游戏。\n\n卡牌扩充：先保存当前进度，选择存档与卡牌；添加完成后重新读档。'
+        content = '\n\n'.join(reversed(lines)) if lines else '本修改器还没有执行修改。\n\n餐券、金块、友情与部队点数：点击按钮后即时生效，随后可正常保存游戏。\n\n卡牌扩充：先保存当前进度，选择存档与卡牌；添加完成后重新读档。'
         self.history.configure(state='normal')
         self.history.delete('1.0', 'end')
         self.history.insert('1.0', content)
         self.history.configure(state='disabled')
+        self.numbers.set_recent(recent)
 
     def open_backup(self):
         path = Path(self.backup) if self.backup else settings.backup_dir()
@@ -164,7 +223,7 @@ class App(tk.Tk):
             f.write(json.dumps(record, ensure_ascii=False) + '\n')
 
     def tab_changed(self, event=None):
-        titles = {str(self.numbers): ('餐券与部队点数', '游戏运行时修改，点击后即时生效'),
+        titles = {str(self.numbers): ('游玩中修改', '当前游戏的资源与部队加成'),
                   str(self.cards): ('卡牌扩充', '查看卡面与技能，按存档选择要添加的卡牌'),
                   str(self.training): ('人物培养与餐券故事', '存档培养 · 当前游戏人物 · 指定战后餐券候选'),
                   str(self.records): ('记录与备份', '查看修改记录，找到添加卡牌前的原始存档'),
@@ -207,6 +266,11 @@ class App(tk.Tk):
         threading.Thread(target=worker, daemon=True).start()
 
     def drain(self):
+        while not self.cosmetics.empty():
+            game = self.cosmetics.get()
+            if game == settings.load().get('game_dir'):
+                self.numbers.icons.reload()
+                self.numbers.paint_resources()
         while not self.progress_mailbox.empty():
             self.status.configure(text=self.progress_mailbox.get(), foreground=MUTED)
         while not self.mailbox.empty():

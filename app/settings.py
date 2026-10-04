@@ -20,7 +20,7 @@ def load():
             except (ValueError, OSError):
                 pass
         _current = {key: value for key, value in data.items()
-                    if key in ['game_dir', 'save_dir', 'alice_path'] and isinstance(value, str)}
+                    if key in ['game_dir', 'save_dir', 'alice_path', 'theme'] and isinstance(value, str)}
     return dict(_current)
 
 
@@ -40,9 +40,8 @@ def backup_dir():
     return save_dir().parent / '修改前备份'
 
 
-def save(game, saves, alice=''):
+def _store(data):
     global _current
-    data = dict(game_dir=str(Path(game).resolve()), save_dir=str(Path(saves).resolve()), alice_path=str(alice or ''))
     app_paths.initialize()
     temp = app_paths.CONFIG_FILE.with_name('settings.' + uuid.uuid4().hex + '.tmp')
     try:
@@ -53,3 +52,15 @@ def save(game, saves, alice=''):
             temp.unlink()
     _current = data
     return data
+
+
+def save(game, saves, alice=''):
+    data = load()
+    data.update(game_dir=str(Path(game).resolve()), save_dir=str(Path(saves).resolve()), alice_path=str(alice or ''))
+    return _store(data)
+
+
+def save_theme(mode):
+    data = load()
+    data['theme'] = mode if mode in ['dark', 'light'] else 'dark'
+    return _store(data)

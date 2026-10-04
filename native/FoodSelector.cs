@@ -161,6 +161,12 @@ internal static class FoodSelector {
     static volatile bool inputClosed;
     static int targetHandle, targetNameHandle;
     static int targetStoryHandle, targetMaximum;
+    static int targetStage;
+    static string endReason;
+    static int targetPid;
+    static long targetSession;
+    static string targetGlobalsOwner, targetPlayerOwner;
+    static long revision;
     static uint targetPage, targetStringPage, targetStoryPage;
 
     static string Hash(byte[] value) {
@@ -181,12 +187,18 @@ internal static class FoodSelector {
         return Engine.SameGlobals(globals, now) && CodeBase(connection, now) == codeBase;
     }
     static bool CurrentTarget() {
+        endReason = "changed";
         if (!CurrentGlobals()) return false;
         var vm = new VmPages(connection, globals);
-        return vm.Pointer(targetHandle) == targetPage && vm.Pointer(targetNameHandle) == targetStringPage &&
+        bool current = vm.Pointer(targetHandle) == targetPage && vm.Pointer(targetNameHandle) == targetStringPage &&
             vm.Pointer(targetStoryHandle) == targetStoryPage && vm.Record(targetHandle,"Character")[0] == targetNameHandle &&
             vm.Record(targetHandle,"Character")[5] == targetStoryHandle &&
-            vm.Record(targetStoryHandle,"FoodTicketEvent")[1] < targetMaximum && vm.Characters().Contains(targetHandle);
+            vm.Characters().Contains(targetHandle);
+        if (!current) return false;
+        targetStage = vm.Record(targetStoryHandle,"FoodTicketEvent")[1];
+        if (targetStage < 0 || targetStage > 3) throw new InvalidOperationException("人物故事进度正在变化，请稍后刷新。");
+        endReason = targetStage >= targetMaximum ? "completed" : null;
+        return targetStage < targetMaximum;
     }
     static void Forget() {
         if (connection != null) connection.Dispose();
@@ -262,6 +274,9 @@ internal static class FoodSelector {
             if(connection.Profile.Food==null)throw new InvalidOperationException(connection.Profile.FoodError??"餐券候选规则需要适配。");
             if(candidate.Length!=Length)throw new InvalidOperationException("餐券筛选代码长度不匹配。");
             globals = Engine.Locate(connection, false).Globals;
+            targetPid = connection.Process.Id; targetSession = connection.Session;
+            targetGlobalsOwner = "0x" + globals.Owner.ToString("x");
+            targetPlayerOwner = "0x" + (new VmPages(connection, globals).Pointer(globals.PlayerHandle) + 12).ToString("x");
             codeBase = CodeBase(connection, globals);
             original = connection.Read(codeBase + Offset, Length);
             if (original == null || Hash(original) != OriginalHash)
@@ -286,6 +301,7 @@ internal static class FoodSelector {
                 throw new InvalidOperationException("人物或故事进度刚刚改变，请重新读取。");
             int maximum = Convert.ToInt32(command["maximum"]);
             targetMaximum = maximum;
+            targetStage = story[1];
             targetStoryHandle = Convert.ToInt32(command["story_handle"]);
             targetStoryPage = Convert.ToUInt32(command["story_page"]);
             if (value[5] != targetStoryHandle || vm.Pointer(targetStoryHandle) != targetStoryPage ||
@@ -305,9 +321,13 @@ internal static class FoodSelector {
     static Dictionary<string, object> State(bool success, bool reply, string message) {
         return new Dictionary<string, object> { {"success", success}, {"reply", reply},
             {"armed", connection != null}, {"restoring", restoring}, {"character", character},
+            {"completed", targetStage}, {"maximum", targetMaximum}, {"reason", endReason},
+            {"pid", targetPid}, {"session", targetSession},
+            {"global_owner", targetGlobalsOwner}, {"player_owner", targetPlayerOwner},
             {"message", message} };
     }
     static void Emit(Dictionary<string, object> state) {
+        state["revision"] = ++revision;
         Console.WriteLine(new JavaScriptSerializer().Serialize(state));
         Console.Out.Flush();
     }
@@ -370,8 +390,18 @@ internal static class FoodSelector {
                 }
                 if (connection != null && DateTime.UtcNow >= retry) {
                     try {
+                        int beforeStage = targetStage;
                         if (restoring || !CurrentTarget()) {
-                            Restore(); Emit(State(true, false, "进度已切换或指定人物故事已完成。本次指定已取消，恢复随机餐券候选。"));
+                            string reason = endReason, previous = character;
+                            int completed = targetStage, maximum = targetMaximum;
+                            Restore();
+                            var state = State(true, false, reason == "completed" ? "这个人物的餐券故事已看完，指定已结束。" : "进度已切换，本次指定已取消，恢复随机餐券候选。");
+                            state["reason"] = reason;
+                            state["character"] = reason == "completed" ? previous : null;
+                            state["completed"] = completed; state["maximum"] = maximum;
+                            Emit(state);
+                        } else if (beforeStage != targetStage) {
+                            Emit(State(true, false, "正在指定“" + character + "”。餐券故事进度已更新。"));
                         }
                     } catch (Exception ex) {
                         restoring = true;

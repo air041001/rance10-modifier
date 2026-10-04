@@ -5,6 +5,7 @@
 
 | 数据 | 游戏实现依据 | 编辑方式 |
 | --- | --- | --- |
+| 第二部友情 | `PlayerCommonParam@FriendPoint::set`、`FriendCountView@Update`、`SceneFriend@OnClick` | 实时补满独立的`m_friendPoint`，人物与故事由游戏友情画面处理 |
 | 人物培养★ | `Character@ForceSetStar`、`Character::CalcNextExp`、`PlayerCard@GetStar` | 写人物★，清本级经验，重设门槛；共享人物ID的卡都受影响 |
 | 重复强化 | `PlayerCard@Count::set`、`PlayerCard::GetMaxCount` | 写单张卡的重复数量，EX强化上限+1为总份数 |
 | 卡牌属性缓存 | `PlayerCard@ForceRecalcStatus`、`OrganizationCardCollection@ForceRecalcStatus` | 清对应卡的`m_lastStar`并标记所属集合已变化 |
@@ -31,4 +32,13 @@
 这证明该样本的故事推进和保存数据有效。没有逐一统计餐券扣减数值，也未覆盖所有人物与路线。
 
 游戏原有的已观看故事回放和通关后的餐券功能属于另外的流程，不能当作普通进度的强制候选。
-未来可继续核对HP恢复、AP恢复、勋章换点数等功能；尚未实现，不属于本次发布内容。
+
+## 第二部友情（2026-10-04）
+
+本机脚本的FriendPoint setter将数值限制在0到3；FriendCountView从该字段更新三个图标。
+`m_friendPoint`与餐券／金块字段`m_foodTicket`独立。新按钮只写友情字段，保留其他资源与部队点数。
+字段位置继续由使用者本机AIN结构取得，不另建中文／日文固定地址。
+
+第二部使用SceneFriend与FriendPhaseList。名单来自游戏的友情环节，点击已选人物由原生流程处理；
+它不调用第一部的FoodTicketTargetFinder，因此没有复用餐券候选筛选钩子。
+只补消耗资源，不直接修改故事阶段、人物培养或剧情标记。

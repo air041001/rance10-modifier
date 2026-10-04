@@ -101,6 +101,9 @@ class Setup(ttk.Frame):
 
     def library_ready(self, report):
         self.owner.images.reload()
+        self.owner.numbers.icons.reload()
+        self.owner.numbers.paint_resources()
+        self.owner.numbers.render_story()
         self.owner.cards.invalidate()
         self.owner.training.invalidate()
         text = '图鉴已准备：%d 张卡面（本次补齐 %d 张，复用 %d 张）。' % (report['cards'], report['generated'], report['reused'])
@@ -196,6 +199,8 @@ class Setup(ttk.Frame):
             self.owner.cards.invalidate()
             self.owner.training.invalidate()
             self.owner.numbers.current = None
+            self.owner.numbers.update_story(dict(armed=False))
+            self.owner.prepare_icons()
             message = '目录已保存。请准备本机图鉴；实时修改的适配状态会单独显示。'
             if not Path(config['save_dir']).is_dir():
                 message = '目录已保存，可先连接实时功能。保存游戏后可在此目录读取存档，或手动选择已有存档目录。'

@@ -124,6 +124,7 @@ class Session:
             self._stop()
             engine.require(self.process.poll() is not None, '正在取消原游戏目录的指定，请稍后重试。')
         self.answers = queue.Queue()
+        self.state = dict(armed=False, message='尚未指定战后餐券人物。')
         self.game_dir = game_dir
         self.profile_path = profile_path
         self.process = subprocess.Popen([str(app_paths.RESOURCE_DIR / 'LiveValues.exe'),
@@ -138,10 +139,11 @@ class Session:
                 state = json.loads(line)
             except ValueError:
                 continue
+            if process is self.process:
+                self.state = state
             if state.get('reply'):
                 answers.put(state)
             elif process is self.process:
-                self.state = state
                 self.events.put((process, state))
         answers.put(dict(success=False, exited=True, armed=False, message='餐券运行组件已退出，请重试。'))
         if process is self.process:
@@ -164,7 +166,8 @@ class Session:
             except queue.Empty:
                 self.process.stdin.close()  # The helper restores in its finally block.
                 raise ValueError('餐券运行组件响应超时，正在取消指定，请稍后重试。')
-            self.state = state
+            if state.get('revision', 0) >= self.state.get('revision', 0):
+                self.state = state
             if not state.get('success'):
                 self.events.put((self.process, state))
                 raise ValueError(state.get('message', '餐券指定未完成。'))
@@ -186,12 +189,16 @@ class Session:
         engine.require(not story['finished'], '“%s”的餐券故事已完成。' % character)
         target = next(row for row in snapshot['characters'] if row['name'] == character)
         patch = make_code(target['handle'], target['story_handle'], base64.b64decode(snapshot['source_code']), snapshot['profile'])
-        return self.request(dict(action='arm', character=character, character_handle=target['handle'],
+        state = self.request(dict(action='arm', character=character, character_handle=target['handle'],
             character_page=target['page'], stage=target['stage'], maximum=story['maximum'],
             story_handle=target['story_handle'], story_page=target['story_page'],
             story_key=target['story_key'],
             pid=snapshot['pid'], session=snapshot['session'], card_ids=[row['id'] for row in rows],
             patch=base64.b64encode(patch).decode('ascii')))
+        latest = dict(self.state)
+        if latest.get('character') == character:
+            latest['card_id'] = rows[0]['id']
+        return latest
 
     def cancel(self):
         return self.request(dict(action='cancel'))

@@ -69,7 +69,7 @@ class Training(ttk.Frame):
         self.stats = ttk.Label(text, text='', style='Surface.TLabel', justify='left')
         self.stats.pack(anchor='w', pady=(0, 12))
         ttk.Label(text, text='已持有的卡牌版本', style='SurfaceHint.TLabel').pack(anchor='w', pady=(0, 6))
-        self.variant = ttk.Combobox(text, state='readonly', width=25)
+        self.variant = ttk.Combobox(text, state='readonly', width=18)
         self.variant.pack(fill='x')
         self.variant.bind('<<ComboboxSelected>>', lambda e: self.show_card())
 
@@ -137,7 +137,10 @@ class Training(ttk.Frame):
         self.after(200, self.poll_food)
 
     def food_changed(self, state):
+        if state.get('revision', 0) < self.food_session.state.get('revision', 0):
+            state = self.food_session.state
         self.food_status.configure(text=state['message'], foreground=GREEN if state.get('success', True) else MUTED)
+        self.owner.numbers.update_story(state)
         self.update_actions()
 
     def arm_food(self):
@@ -151,6 +154,8 @@ class Training(ttk.Frame):
             self.owner.run(self.food_session.inspect, self.live_loaded, '正在读取当前游戏人物与故事进度…')
 
     def live_loaded(self, context):
+        self.gate.ready()
+        self.loaded = True
         self.savebox.set('当前运行进度 · 餐券人物')
         self.source_hint.set('当前游戏名单。餐券指定即时生效；修改★或强化请另选存档。')
         self.context = context
@@ -159,6 +164,7 @@ class Training(ttk.Frame):
         with_story = sum(bool(rows[0]['story'] and rows[0]['story']['maximum']) for rows in self.characters.values())
         self.owner.status.configure(text='已读取当前游戏：%d 位人物，%d 位有餐券故事资料。' % (len(self.characters), with_story))
         self.update_actions()
+        self.detail_scroll.see(self.food_button)
 
     def cancel_food(self):
         if not self.owner.busy:

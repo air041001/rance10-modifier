@@ -74,6 +74,36 @@ def container(ain):
 
 
 class LiveProfileTests(unittest.TestCase):
+    def test_optional_chapter_display_maps_names_after_reordering(self):
+        ain = metadata()
+        index = len(ain['structures'])
+        ain['structures'].append(dict(index=index, name='GameContext', members=[
+            dict(name='extra', type=(10, -1, 0, None)),
+            dict(name='m_chapter', type=(92, 74, 0, None))]))
+        ain['globals'].insert(1, dict(index=1, name='g_gameContext', type=(13, index, 0, None)))
+        for i, g in enumerate(ain['globals']):
+            g['index'] = i
+        data = live_profile.describe(ain, include_food=False)
+        self.assertEqual(data['GameGlobal'], 1)
+        self.assertEqual(data['Fields']['GameContext'], [1])
+        ain['structures'][-1]['members'].reverse()
+        ain['globals'].reverse()
+        for i, g in enumerate(ain['globals']):
+            g['index'] = i
+        changed = live_profile.describe(ain, include_food=False)
+        self.assertEqual(changed['Fields']['GameContext'], [0])
+        self.assertNotEqual(changed['GameGlobal'], data['GameGlobal'])
+
+    def test_unknown_chapter_metadata_does_not_gate_live_resources(self):
+        ain = metadata()
+        baseline = live_profile.describe(ain, include_food=False)
+        self.assertEqual(baseline['GameGlobal'], -1)
+        ain['structures'].append(dict(index=len(ain['structures']), name='GameContext', members=[
+            dict(name='m_chapter', type=(12, -1, 0, None))]))
+        changed = live_profile.describe(ain, include_food=False)
+        self.assertEqual(changed['Fields']['PlayerCommonParam'], baseline['Fields']['PlayerCommonParam'])
+        self.assertEqual(changed['GameGlobal'], -1)
+
     def test_member_and_global_reordering_maps_actual_positions(self):
         ain = metadata()
         baseline = live_profile.describe(ain)
@@ -85,7 +115,8 @@ class LiveProfileTests(unittest.TestCase):
             g['index'] = i
         changed = live_profile.describe(ain)
         self.assertNotEqual(changed['PlayerGlobal'], baseline['PlayerGlobal'])
-        for name, expected in [('PlayerCommonParam', 'm_foodTicket'), ('PartyBonusSwitcher', 'm_maxPoint')]:
+        for name, expected in [('PlayerCommonParam', 'm_foodTicket'), ('PlayerCommonParam', 'm_friendPoint'),
+                               ('PartyBonusSwitcher', 'm_maxPoint')]:
             s = next(s for s in ain['structures'] if s['name'] == name)
             position = next(i for i, m in enumerate(s['members']) if m['name'] == expected)
             slot = next(i for i, (_, field) in enumerate(live_profile.SCHEMAS[name]) if field == expected)
@@ -174,7 +205,7 @@ class LiveProfileTests(unittest.TestCase):
             self.assertEqual(built.returncode, 0, built.stdout.decode(errors='replace'))
             result = subprocess.run([str(executable)], capture_output=True, timeout=15)
             self.assertEqual(result.returncode, 0, result.stderr.decode(errors='replace'))
-            self.assertEqual(result.stdout.count(b'PASS '), 4)
+            self.assertEqual(result.stdout.count(b'PASS '), 6)
 
 
 if __name__ == '__main__':
