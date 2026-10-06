@@ -1,4 +1,4 @@
-"""Shared colours and fixed-size navigation for the local desktop app."""
+"""Shared desktop styles and layout sized for the current Tk display scale."""
 import tkinter as tk
 from tkinter import ttk
 from tkinter import font as tkfont
@@ -16,6 +16,62 @@ PALETTES = {
 globals().update(PALETTES['dark'])
 MODE = 'dark'
 FONT = 'Microsoft YaHei UI'
+
+
+def px(master, value):
+    """Scale pixel geometry to match Tk's automatically scaled point fonts."""
+    scale = float(master.tk.call('tk', 'scaling')) * 72 / 96
+    if isinstance(value, (tuple, list)):
+        return tuple(max(0, round(n * scale)) for n in value)
+    return max(0, round(value * scale))
+
+
+def fit_window(master):
+    """Start on this monitor without extending behind the taskbar."""
+    import ctypes
+    from ctypes import wintypes
+    left, top, right, bottom = 0, 0, master.winfo_screenwidth(), master.winfo_screenheight()
+    try:
+        class MonitorInfo(ctypes.Structure):
+            _fields_ = [('size', wintypes.DWORD), ('monitor', wintypes.RECT),
+                        ('work', wintypes.RECT), ('flags', wintypes.DWORD)]
+        user = ctypes.windll.user32
+        monitor_from_window = user.MonitorFromWindow
+        monitor_from_window.argtypes = [wintypes.HWND, wintypes.DWORD]
+        monitor_from_window.restype = wintypes.HANDLE
+        get_info = user.GetMonitorInfoW
+        get_info.argtypes = [wintypes.HANDLE, ctypes.POINTER(MonitorInfo)]
+        get_info.restype = wintypes.BOOL
+        info = MonitorInfo(size=ctypes.sizeof(MonitorInfo))
+        if get_info(monitor_from_window(master.winfo_id(), 2), ctypes.byref(info)):
+            left, top, right, bottom = info.work.left, info.work.top, info.work.right, info.work.bottom
+    except (AttributeError, OSError):
+        pass
+    # Reserve room for the native frame, caption, and an outside margin.
+    available_width = max(1, right - left - px(master, 32))
+    available_height = max(1, bottom - top - px(master, 56))
+    width, height = min(px(master, 1280), available_width), min(px(master, 820), available_height)
+    master.minsize(min(px(master, 900), int(available_width * .85)),
+                   min(px(master, 620), int(available_height * .85)))
+    master.geometry(f'{width}x{height}+{left + (right-left-width)//2}+{top + px(master, 12)}')
+    return width, height
+
+
+def flow_buttons(master, buttons, gap=10):
+    """Wrap action buttons by their actual requested widths, including fonts."""
+    def layout(event=None):
+        width = event.width if event else master.winfo_width()
+        row, column, used = 0, 0, 0
+        for button in buttons:
+            size = button.winfo_reqwidth()
+            if used and used + gap + size > width:
+                row, column, used = row + 1, 0, 0
+            button.grid(row=row, column=column, sticky='w',
+                        padx=(0, gap), pady=(0, 8))
+            used += (gap if used else 0) + size
+            column += 1
+    master.bind('<Configure>', layout)
+    layout()
 
 
 def set_palette(mode):
@@ -153,7 +209,8 @@ def configure_styles(master):
           indicatorforeground=[('disabled', MUTED), ('selected', BLUE)])
     s.configure('Surface.TCheckbutton', background=SURFACE)
     s.map('Surface.TCheckbutton', background=[('active', SURFACE)])
-    s.configure('Treeview', font=(FONT, 10), rowheight=32, background=SURFACE,
+    rowheight = max(px(master, 32), tkfont.nametofont('TkDefaultFont', root=master).metrics('linespace') + 8)
+    s.configure('Treeview', font=(FONT, 10), rowheight=rowheight, background=SURFACE,
                 fieldbackground=SURFACE, foreground=TEXT, borderwidth=0)
     s.configure('Treeview.Heading', font=(FONT, 9, 'bold'), background=CONTROL,
                 foreground=MUTED, padding=(8, 8), relief='flat')
@@ -187,9 +244,8 @@ class PageDeck(ttk.Frame):
         key = str(page)
         self.pages[key] = page
         page.grid(row=0, column=0, sticky='nsew')
-        item = tk.Frame(self.sidebar, bg=NAV, height=58, width=166, cursor='hand2', takefocus=1)
+        item = tk.Frame(self.sidebar, bg=NAV, cursor='hand2', takefocus=1)
         item.pack(fill='x', pady=4)
-        item.pack_propagate(False)
         marker = tk.Frame(item, bg=NAV, width=3)
         marker.pack(side='left', fill='y')
         number = tk.Label(item, text=['▤', '▦', '☆', '◷', '⚙'][len(self.pages)-1], font=('Segoe UI Symbol', 14),
@@ -268,18 +324,34 @@ class LibraryGate(tk.Frame):
 
 class ScrollBody(tk.Frame):
     """A card detail column can scroll as one piece at smaller window sizes."""
-    def __init__(self, master, background=None):
+    def __init__(self, master, background=None, autohide=False, stretch=False):
         background = SURFACE if background is None else background
         super().__init__(master, bg=background, borderwidth=0)
         self.canvas = tk.Canvas(self, bg=background, highlightthickness=0, borderwidth=0, yscrollincrement=24)
         scrollbar = ttk.Scrollbar(self, orient='vertical', command=self.canvas.yview)
         self.canvas.configure(yscrollcommand=scrollbar.set)
         scrollbar.pack(side='right', fill='y')
+        self.scrollbar = scrollbar
         self.canvas.pack(side='left', fill='both', expand=True)
         self.body = tk.Frame(self.canvas, bg=background)
         self.window = self.canvas.create_window((0, 0), window=self.body, anchor='nw')
-        self.body.bind('<Configure>', lambda e: self.canvas.configure(scrollregion=self.canvas.bbox('all')))
-        self.canvas.bind('<Configure>', lambda e: self.canvas.itemconfigure(self.window, width=e.width))
+        def resized(event=None):
+            self.canvas.itemconfigure(self.window, width=self.canvas.winfo_width())
+            if stretch:
+                height = max(self.canvas.winfo_height(), self.body.winfo_reqheight())
+                self.canvas.itemconfigure(self.window, height=height)
+                self.canvas.configure(scrollregion=(0, 0, self.canvas.winfo_width(), height))
+            else:
+                self.canvas.configure(scrollregion=self.canvas.bbox('all'))
+            if autohide:
+                if self.body.winfo_reqheight() > self.canvas.winfo_height():
+                    if not scrollbar.winfo_manager():
+                        scrollbar.pack(side='right', fill='y', before=self.canvas)
+                elif scrollbar.winfo_manager():
+                    scrollbar.pack_forget()
+        self.body.bind('<Configure>', resized)
+        self.canvas.bind('<Configure>', resized)
+        self.bind('<Map>', lambda event: self.after_idle(resized))
         self.canvas.bind('<MouseWheel>', self.wheel)
 
     def wheel(self, event):
@@ -292,7 +364,8 @@ class ScrollBody(tk.Frame):
         bottom = top + widget.winfo_height()
         visible = self.canvas.canvasy(0)
         height = self.canvas.winfo_height()
-        total = max(1, self.body.winfo_height())
+        region = self.canvas.tk.splitlist(self.canvas.cget('scrollregion'))
+        total = max(1, float(region[3]) - float(region[1])) if region else max(1, self.body.winfo_height())
         if top < visible:
             self.canvas.yview_moveto(max(0, top - 12) / total)
         elif bottom > visible + height:

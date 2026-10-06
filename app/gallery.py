@@ -6,7 +6,7 @@ from tkinter import ttk
 from PIL import Image, ImageTk
 import engine
 import app_paths
-from ui_theme import BG, SURFACE, TEXT, MUTED, LINE, BLUE, TINT, GOLD, FONT, CONTROL, ACCENT_TEXT
+from ui_theme import BG, SURFACE, TEXT, MUTED, LINE, BLUE, TINT, GOLD, FONT, CONTROL, ACCENT_TEXT, px
 
 
 class Images:
@@ -27,6 +27,7 @@ class Images:
             self.cache.clear()
 
     def get(self, ident, size=(136, 204)):
+        size = px(self.master, size)
         key = (ident, size)
         if key in self.cache:
             self.cache.move_to_end(key)
@@ -54,6 +55,7 @@ class Gallery(ttk.Frame):
     def __init__(self, master, images, on_detail, on_toggle):
         super().__init__(master)
         self.images, self.on_detail, self.on_toggle = images, on_detail, on_toggle
+        self.W, self.H = px(self, (170, 290))
         self.cards, self.selected, self.active, self.cols = [], set(), None, 1
         self.photos = []
         self.pending = False
@@ -67,6 +69,9 @@ class Gallery(ttk.Frame):
         self.canvas.bind('<Button-1>', self.click)
         self.canvas.bind('<Double-1>', self.double_click)
         self.canvas.bind('<space>', self.space)
+
+    def p(self, value):
+        return px(self, value)
 
     def set_cards(self, cards, selected, active=None, reset=True):
         self.cards, self.selected, self.active = cards, set(selected), active
@@ -102,7 +107,7 @@ class Gallery(ttk.Frame):
         self.canvas.delete('all')
         self.photos = []
         if not self.cards:
-            self.canvas.create_text(24, 28, anchor='nw', text='没有符合条件的卡牌。可调整搜索或筛选。',
+            self.canvas.create_text(self.p(24), self.p(28), anchor='nw', width=max(1, self.canvas.winfo_width()-self.p(48)), text='没有符合条件的卡牌。可调整搜索或筛选。',
                                     fill=MUTED, font=(FONT, 11))
             return
         top = max(0, int(self.canvas.canvasy(0) // self.H) - 1)
@@ -115,32 +120,32 @@ class Gallery(ttk.Frame):
             tags = ('card', 'i%d' % index)
             outline = BLUE if checked or r['id'] == self.active else LINE
             fill = TINT if checked else SURFACE
-            self.rounded(x + 5, y + 4, x + self.W - 5, y + self.H - 6,
-                         radius=3, fill=fill, outline=outline, width=2 if checked else 1, tags=tags)
+            self.rounded(x + self.p(5), y + self.p(4), x + self.W - self.p(5), y + self.H - self.p(6),
+                         radius=self.p(3), fill=fill, outline=outline, width=self.p(2 if checked else 1), tags=tags)
             image = self.images.get(r['id'])
             if image:
                 self.photos.append(image)
-                self.canvas.create_image(x + self.W // 2, y + 16, image=image, anchor='n', tags=tags)
+                self.canvas.create_image(x + self.W // 2, y + self.p(16), image=image, anchor='n', tags=tags)
             else:
-                self.canvas.create_rectangle(x + 17, y + 16, x + 153, y + 220, fill=CONTROL, outline='', tags=tags)
-                self.canvas.create_text(x + self.W // 2, y + 113, text='暂无卡面', fill=MUTED, font=(FONT, 10), tags=tags)
-            self.canvas.create_text(x + self.W // 2, y + 230, text=r['id'], width=146,
+                self.canvas.create_rectangle(x + self.p(17), y + self.p(16), x + self.p(153), y + self.p(220), fill=CONTROL, outline='', tags=tags)
+                self.canvas.create_text(x + self.W // 2, y + self.p(113), text='暂无卡面', fill=MUTED, font=(FONT, 10), tags=tags)
+            self.canvas.create_text(x + self.W // 2, y + self.p(230), text=r['id'], width=self.p(146),
                                     font=(FONT, 9, 'bold'), fill=TEXT, anchor='n', tags=tags)
-            self.canvas.create_text(x + self.W // 2, y + 272, text='%s  ·  ★%s' % (r['faction'], r['star']),
+            self.canvas.create_text(x + self.W // 2, y + self.p(272), text='%s  ·  ★%s' % (r['faction'], r['star']),
                                     font=(FONT, 8), fill=MUTED, tags=tags)
             if r['rarity'] != '普通':
                 colour, ink = ('#f9e9bf', GOLD) if r['rarity'] == '特级' else ('#e9ddff', '#6942a6')
-                self.rounded(x + 105, y + 12, x + 158, y + 35, radius=4, fill=colour, outline='', tags=tags)
-                self.canvas.create_text(x + 132, y + 23, text=r['rarity'], fill=ink, font=(FONT, 8, 'bold'), tags=tags)
+                self.rounded(x + self.p(105), y + self.p(12), x + self.p(158), y + self.p(35), radius=self.p(4), fill=colour, outline='', tags=tags)
+                self.canvas.create_text(x + self.p(132), y + self.p(23), text=r['rarity'], fill=ink, font=(FONT, 8, 'bold'), tags=tags)
             if r['owned'] or not r['available']:
                 label = '已持有' if r['owned'] else '不可加'
-                self.rounded(x + 12, y + 12, x + 62, y + 35, radius=4, fill='#39485c', outline='', tags=tags)
-                self.canvas.create_text(x + 37, y + 23, text=label, fill='white', font=(FONT, 8), tags=tags)
+                self.rounded(x + self.p(12), y + self.p(12), x + self.p(62), y + self.p(35), radius=self.p(4), fill='#39485c', outline='', tags=tags)
+                self.canvas.create_text(x + self.p(37), y + self.p(23), text=label, fill='white', font=(FONT, 8), tags=tags)
             else:
-                self.rounded(x + 12, y + 12, x + 36, y + 36, radius=4,
+                self.rounded(x + self.p(12), y + self.p(12), x + self.p(36), y + self.p(36), radius=self.p(4),
                              fill=BLUE if checked else SURFACE, outline=BLUE, width=1, tags=tags)
                 if checked:
-                    self.canvas.create_text(x + 24, y + 24, text='✓', fill=ACCENT_TEXT, font=('Segoe UI', 12, 'bold'), tags=tags)
+                    self.canvas.create_text(x + self.p(24), y + self.p(24), text='✓', fill=ACCENT_TEXT, font=('Segoe UI', 12, 'bold'), tags=tags)
 
     def rounded(self, x1, y1, x2, y2, radius=8, **options):
         r = radius
@@ -171,7 +176,7 @@ class Gallery(ttk.Frame):
         gutter = max(0, (self.canvas.winfo_width() - self.cols * self.W) // 2)
         localx = x - gutter - (index % self.cols) * self.W
         localy = y - (index // self.cols) * self.H
-        if 12 <= localx <= 36 and 12 <= localy <= 36 and not r['owned'] and r['available']:
+        if self.p(12) <= localx <= self.p(36) and self.p(12) <= localy <= self.p(36) and not r['owned'] and r['available']:
             self.on_toggle(r)
         self.schedule()
 
@@ -182,7 +187,7 @@ class Gallery(ttk.Frame):
             gutter = max(0, (self.canvas.winfo_width() - self.cols * self.W) // 2)
             localx = x - gutter - (index % self.cols) * self.W
             localy = y - (index // self.cols) * self.H
-            if not (12 <= localx <= 36 and 12 <= localy <= 36):
+            if not (self.p(12) <= localx <= self.p(36) and self.p(12) <= localy <= self.p(36)):
                 self.on_toggle(self.cards[index])
 
     def space(self, event):

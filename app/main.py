@@ -18,7 +18,7 @@ from numbers_ui import Numbers
 from cards_ui import Cards
 from training_ui import Training
 import ui_theme
-from ui_theme import BG, SURFACE, TEXT, MUTED, LINE, NAV, FONT, GREEN, RED, PageDeck, configure_styles
+from ui_theme import BG, SURFACE, TEXT, MUTED, LINE, NAV, FONT, GREEN, RED, PageDeck, configure_styles, px, ScrollBody, flow_buttons
 
 
 class App(tk.Tk):
@@ -27,8 +27,7 @@ class App(tk.Tk):
         super().__init__()
         ui_theme.set_palette(settings.load().get('theme', 'dark'))
         self.title('兰斯10修改器 · v' + VERSION)
-        self.geometry('1280x820')
-        self.minsize(900, 700)
+        self.initial_size = ui_theme.fit_window(self)
         self.configure(bg=BG)
         icon = app_paths.RESOURCE_DIR / 'app.ico'
         if icon.is_file():
@@ -43,15 +42,14 @@ class App(tk.Tk):
         # Use explicit ttk styles so headings and numeric values retain their size.
         self.style()
 
-        sidebar = tk.Frame(self, bg=NAV, width=180)
+        sidebar = self.sidebar = tk.Frame(self, bg=NAV, width=px(self, 180))
         sidebar.pack(side='left', fill='y')
         sidebar.pack_propagate(False)
         brand = tk.Frame(sidebar, bg=NAV, padx=20, pady=24)
         brand.pack(fill='x')
-        tk.Label(brand, text='RANCE X', font=('Segoe UI', 19, 'bold'), bg=NAV, fg=ui_theme.BLUE, anchor='w').pack(fill='x')
+        self.brand_title = tk.Label(brand, text='RANCE X', font=('Segoe UI', 19, 'bold'), bg=NAV, fg=ui_theme.BLUE, anchor='w')
+        self.brand_title.pack(fill='x')
         tk.Label(brand, text='兰斯10修改器', font=(FONT, 10), bg=NAV, fg=TEXT, anchor='w').pack(fill='x', pady=(6, 0))
-        navigation = tk.Frame(sidebar, bg=NAV, padx=9)
-        navigation.pack(fill='x', pady=(10, 0))
         info = tk.Frame(sidebar, bg=NAV, padx=20, pady=22)
         info.pack(side='bottom', fill='x')
         tk.Frame(info, bg=LINE, height=1).pack(fill='x', pady=(0, 18))
@@ -59,6 +57,10 @@ class App(tk.Tk):
                  bg=NAV, fg=MUTED, justify='left', anchor='w').pack(fill='x')
         tk.Label(info, text='本地工具  /  v' + VERSION, font=(FONT, 8), bg=NAV,
                  fg=MUTED, anchor='w').pack(fill='x', pady=(16, 0))
+        self.navigation_scroll = ScrollBody(sidebar, background=NAV, autohide=True)
+        self.navigation_scroll.pack(fill='both', expand=True, pady=(10, 0))
+        navigation = self.navigation_scroll.body
+        navigation.configure(padx=9)
 
         workspace = tk.Frame(self, bg=BG)
         workspace.pack(side='left', fill='both', expand=True)
@@ -77,7 +79,8 @@ class App(tk.Tk):
         self.theme_button.grid(row=0, column=2, padx=(12, 0))
         self.connection = tk.Label(header, text='●  等待连接', font=(FONT, 9), bg=BG, fg=MUTED)
         self.connection.grid(row=0, column=1, padx=(12, 0))
-        heading.bind('<Configure>', lambda e: self.page_hint.configure(wraplength=max(240, e.width)))
+        heading.bind('<Configure>', lambda e: [label.configure(wraplength=max(1, e.width))
+                     for label in [self.page_title, self.page_hint]])
         tk.Frame(workspace, bg=LINE, height=1).pack(fill='x')
         self.images = Images(self)
         self.tabs = PageDeck(workspace, navigation)
@@ -91,6 +94,10 @@ class App(tk.Tk):
         self.tabs.add(self.training, text='人物培养', subtitle='★等级 · 强化 · 餐券故事')
         self.tabs.add(self.records, text='记录与备份', subtitle='修改记录与原始存档')
         self.tabs.add(self.setup, text='设置与图鉴', subtitle='目录 · 连接 · 图鉴准备')
+        self.update_idletasks()
+        sidebar.configure(width=max(px(self, 180), brand.winfo_reqwidth(), info.winfo_reqwidth(),
+                                    navigation.winfo_reqwidth() + self.navigation_scroll.scrollbar.winfo_reqwidth()))
+        self.navigation_scroll.bind_children(follow_focus=True)
         self.build_records()
         self.tabs.bind('<<NotebookTabChanged>>', self.tab_changed)
         footer = ttk.Frame(workspace, padding=(24, 8, 24, 10))
@@ -100,7 +107,7 @@ class App(tk.Tk):
         self.top = tk.BooleanVar(value=False)
         ttk.Checkbutton(footer, text='保持窗口在最前', variable=self.top,
                          command=lambda: self.attributes('-topmost', self.top.get())).pack(side='right')
-        footer.bind('<Configure>', lambda e: self.status.configure(wraplength=max(380, e.width - 200)))
+        self.status.bind('<Configure>', lambda e: self.status.configure(wraplength=max(1, e.width)))
         tk.Frame(workspace, bg=LINE, height=1).pack(side='bottom', fill='x')
         self.tabs.pack(fill='both', expand=True)
         self.after(100, self.drain)
@@ -167,12 +174,14 @@ class App(tk.Tk):
                                   fg=ui_theme.GREEN if connected else ui_theme.MUTED, bg=ui_theme.BG)
 
     def build_records(self):
-        ttk.Label(self.records, text='每次修改都有记录，加卡与培养修改会自动保留原始存档。', style='Hint.TLabel').pack(anchor='w', pady=(0, 16))
+        hint = ttk.Label(self.records, text='每次修改都有记录，加卡与培养修改会自动保留原始存档。', style='Hint.TLabel')
+        hint.pack(fill='x', pady=(0, 16))
+        hint.bind('<Configure>', lambda e: hint.configure(wraplength=max(1, e.width)))
         bar = ttk.Frame(self.records)
         bar.pack(fill='x', pady=(0, 14))
-        ttk.Button(bar, text='打开原档备份', command=self.open_backup).pack(side='left')
-        ttk.Button(bar, text='打开使用说明', command=lambda: os.startfile(str(app_paths.RESOURCE_DIR / '使用说明.txt'))).pack(side='left', padx=10)
-        ttk.Button(bar, text='刷新记录', command=self.refresh_history).pack(side='left')
+        flow_buttons(bar, [ttk.Button(bar, text='打开原档备份', command=self.open_backup),
+                          ttk.Button(bar, text='打开使用说明', command=lambda: os.startfile(str(app_paths.RESOURCE_DIR / '使用说明.txt'))),
+                          ttk.Button(bar, text='刷新记录', command=self.refresh_history)])
         self.history = tk.Text(self.records, bg=SURFACE, fg=TEXT, relief='flat', wrap='word', padx=20, pady=18,
                                highlightbackground=LINE, highlightthickness=1,
                                spacing1=5, spacing3=5, font=(FONT, 11), state='disabled')

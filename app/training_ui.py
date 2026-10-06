@@ -5,7 +5,7 @@ import app_paths
 import engine
 import training
 import food
-from ui_theme import FONT, GREEN, MUTED, surface, ScrollBody, LibraryGate
+from ui_theme import FONT, GREEN, MUTED, BG, surface, ScrollBody, LibraryGate, px, flow_buttons
 
 
 class Training(ttk.Frame):
@@ -15,9 +15,10 @@ class Training(ttk.Frame):
         self.context, self.saves, self.rows = None, [], []
         self.active, self.photo, self.loaded = None, None, False
         self.food_session = food.Session(self.food_changed)
-        self.content = ttk.Frame(self)
+        self.content = ScrollBody(self, background=BG, autohide=True, stretch=True)
         self.content.pack(fill="both", expand=True)
-        top = surface(self.content, 12)
+        content = self.content.body
+        top = surface(content, 12)
         top.pack(fill='x')
         ttk.Label(top, text='目标存档', style='Surface.TLabel').pack(side='left', padx=(0, 12))
         self.savebox = ttk.Combobox(top, state='readonly', font=(FONT, 10))
@@ -28,13 +29,15 @@ class Training(ttk.Frame):
         self.live_button = ttk.Button(top, text='读取当前游戏', command=self.load_live)
         self.live_button.pack(side='left', padx=(10, 0))
         self.source_hint = tk.StringVar(value='选择存档可修改培养；读取当前游戏可直接指定餐券人物，无需保存。')
-        ttk.Label(self.content, textvariable=self.source_hint,
-                  style='Hint.TLabel').pack(anchor='w', pady=(9, 12))
+        source_label = ttk.Label(content, textvariable=self.source_hint, style='Hint.TLabel')
+        source_label.pack(fill='x', pady=(9, 12))
+        source_label.bind('<Configure>', lambda e: source_label.configure(wraplength=max(1, e.width)))
 
-        center = ttk.Panedwindow(self.content, orient='horizontal')
+        center = tk.PanedWindow(content, orient='horizontal', bg=BG, borderwidth=0,
+                               sashwidth=12, opaqueresize=True, height=px(self, 380))
         center.pack(fill='both', expand=True)
-        left = ttk.Frame(center, width=310)
-        center.add(left, weight=1)
+        left = ttk.Frame(center, width=px(self, 310))
+        center.add(left, minsize=px(self, 100), stretch='never')
         self.query = tk.StringVar()
         self.search = ttk.Entry(left, textvariable=self.query)
         self.search.pack(fill='x', pady=(0, 10))
@@ -46,20 +49,32 @@ class Training(ttk.Frame):
         self.tree = ttk.Treeview(body, columns=('name', 'star', 'story'), show='headings', selectmode='browse')
         for key, name, width in [('name', '人物', 130), ('star', '★等级', 65), ('story', '故事', 70)]:
             self.tree.heading(key, text=name)
-            self.tree.column(key, width=width, minwidth=45, stretch=key == 'name')
+            self.tree.column(key, width=px(self, width), minwidth=px(self, 45), stretch=key == 'name')
         scroll = ttk.Scrollbar(body, orient='vertical', command=self.tree.yview)
         self.tree.configure(yscrollcommand=scroll.set)
         scroll.pack(side='right', fill='y')
+        horizontal = ttk.Scrollbar(body, orient='horizontal', command=self.tree.xview)
+        self.tree.configure(xscrollcommand=horizontal.set)
+        horizontal.pack(side='bottom', fill='x')
         self.tree.pack(fill='both', expand=True)
         self.tree.bind('<<TreeviewSelect>>', self.select_character)
 
         right = surface(center, 16)
-        center.add(right, weight=2)
+        center.add(right, minsize=px(self, 100), stretch='always')
         self.detail_scroll = ScrollBody(right)
         self.detail_scroll.pack(fill='both', expand=True)
         detail = self.detail_scroll.body
         self.title = ttk.Label(detail, text='选择人物查看培养与餐券故事', style='CardTitle.TLabel')
         self.title.pack(anchor='w', pady=(0, 12))
+        def layout_panes(event):
+            vertical = event.width < px(self, 780)
+            orientation = 'vertical' if vertical else 'horizontal'
+            if str(center.cget('orient')) != orientation:
+                center.configure(orient=orientation, height=px(self, 500 if vertical else 380))
+                left.pack_propagate(not vertical)
+                left.configure(height=px(self, 180) if vertical else 0)
+                center.sash_place(0, px(self, 310), px(self, 180))
+        center.bind('<Configure>', layout_panes)
         header = ttk.Frame(detail, style='Surface.TFrame')
         header.pack(fill='x')
         self.preview = ttk.Label(header, style='Surface.TLabel')
@@ -107,9 +122,8 @@ class Training(ttk.Frame):
         row = ttk.Frame(detail, style='Surface.TFrame')
         row.pack(fill='x', pady=(0, 10))
         self.food_button = ttk.Button(row, text='指定战后餐券人物', style='Primary.TButton', command=self.arm_food)
-        self.food_button.pack(side='left')
         self.cancel_food_button = ttk.Button(row, text='取消指定', command=self.cancel_food)
-        self.cancel_food_button.pack(side='left', padx=(12, 0))
+        flow_buttons(row, [self.food_button, self.cancel_food_button])
         self.food_status = ttk.Label(detail, text=self.food_session.state['message'], style='Surface.TLabel',
                                      wraplength=530, justify='left')
         self.food_status.pack(anchor='w', pady=(0, 8))
@@ -119,17 +133,23 @@ class Training(ttk.Frame):
                   style='SurfaceHint.TLabel', wraplength=530).pack(anchor='w')
         self.detail_scroll.bind_children()
         self.detail_scroll.body.bind('<Configure>', self.wrap_detail, add='+')
+        def bind_outer(widget):
+            widget.bind('<MouseWheel>', self.content.wheel)
+            for child in widget.winfo_children():
+                bind_outer(child)
+        for area in [top, source_label]:
+            bind_outer(area)
         self.gate = LibraryGate(self, self.content, owner, self.refresh)
         self.update_actions()
         self.after(200, self.poll_food)
 
     def wrap_detail(self, event):
-        width = max(240, event.width - 6)
+        width = max(1, event.width - 6)
         if getattr(self, '_detail_wrap_width', None) == width:
             return
         self._detail_wrap_width = width
         for widget in self.detail_scroll.body.winfo_children():
-            if isinstance(widget, ttk.Label) and int(widget.cget('wraplength') or 0) > 0:
+            if isinstance(widget, ttk.Label) and (widget is self.title or int(widget.cget('wraplength') or 0) > 0):
                 widget.configure(wraplength=width)
 
     def poll_food(self):

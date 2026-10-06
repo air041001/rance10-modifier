@@ -5,7 +5,7 @@ from tkinter import ttk
 import runtime
 import settings
 from game_icons import Icons
-from ui_theme import BG, GREEN, RED, MUTED, FONT, surface, ScrollBody
+from ui_theme import BG, GREEN, RED, MUTED, FONT, surface, ScrollBody, px
 
 
 class Numbers(ttk.Frame):
@@ -36,20 +36,23 @@ class Numbers(ttk.Frame):
         self.food_title, self.food_icon = self.heading(food, '餐券 / 金块')
         self.food, self.food_unit = self.metric(food, '/ 3 张')
         self.food_slots = self.slots(food)
-        self.food_note = ttk.Label(food, text='第一部餐券，第二部金块。', style='SurfaceHint.TLabel', wraplength=230)
+        self.food_note = ttk.Label(food, text='第一部餐券，第二部金块。', style='SurfaceHint.TLabel', wraplength=px(self, 230))
         self.food_note.pack(fill='x', pady=(8, 12))
         self.fill_button = ttk.Button(food, text='补满餐券 / 金块', style='Primary.TButton', command=lambda: self.act('fill3'))
         self.fill_button.pack(side='bottom', fill='x')
         self.friend_title, self.friend_icon = self.heading(friendship, '友情')
         self.friend_points, _ = self.metric(friendship, '/ 3 点')
         self.friend_slots = self.slots(friendship)
-        self.friend_note = ttk.Label(friendship, text='第二部在游戏中选择友情人物。', style='SurfaceHint.TLabel', wraplength=230)
+        self.friend_note = ttk.Label(friendship, text='第二部在游戏中选择友情人物。', style='SurfaceHint.TLabel', wraplength=px(self, 230))
         self.friend_note.pack(fill='x', pady=(8, 12))
         self.friend_button = ttk.Button(friendship, text='补满 3 点友情', style='Primary.TButton', command=lambda: self.act('fillfriend3'))
         self.friend_button.pack(side='bottom', fill='x')
         _, self.points_icon = self.heading(points, '部队加成点数')
         self.points, _ = self.metric(points, '总点数')
-        ttk.Label(points, text='包含已用点数，已有加成会保留。', style='SurfaceHint.TLabel', wraplength=230).pack(fill='x', pady=(2, 12))
+        point_note = ttk.Label(points, text='包含已用点数，已有加成会保留。', style='SurfaceHint.TLabel', wraplength=px(self, 230))
+        point_note.pack(fill='x', pady=(2, 12))
+        for panel, note in zip(self.panels, [self.food_note, self.friend_note, point_note]):
+            panel.bind('<Configure>', lambda e, label=note: label.configure(wraplength=max(1, e.width - 38)))
         self.add_button = ttk.Button(points, text='增加 5 点', style='Primary.TButton', command=lambda: self.act('addpoints', 5))
         self.add_button.pack(side='bottom', fill='x')
         setting = ttk.Frame(points, style='Surface.TFrame')
@@ -77,7 +80,8 @@ class Numbers(ttk.Frame):
         self.story_progress.pack(anchor='w')
         self.story_note = ttk.Label(self.story_copy, text='当前使用游戏的随机餐券候选。', style='SurfaceHint.TLabel', wraplength=500)
         self.story_note.pack(fill='x', pady=(6, 4))
-        self.story_copy.bind('<Configure>', lambda e: self.story_note.configure(wraplength=max(160, e.width)))
+        self.story_copy.bind('<Configure>', lambda e: [label.configure(wraplength=max(1, e.width))
+                            for label in [self.story_name, self.story_progress, self.story_note]])
         self.state = ttk.Label(content, text='每次点击都会核对当前进度；菜单未刷新时，返回上一页再打开。', style='Hint.TLabel', wraplength=800)
         self.state.pack(fill='x', pady=(14, 16))
         recent = ttk.Frame(content)
@@ -124,16 +128,17 @@ class Numbers(ttk.Frame):
 
     def layout(self, event=None):
         width = event.width if event else self.resources.winfo_width()
-        columns = 3 if width >= 790 else 2
+        minimum = max(px(self, 260), self.spin.master.winfo_reqwidth() + 38)
+        columns = max(1, min(3, (width + 12) // (minimum + 12)))
         if getattr(self, '_columns', None) == columns:
             return
         self._columns = columns
         for index in range(3):
-            self.resources.columnconfigure(index, weight=int(index < columns), uniform='resources')
+            self.resources.columnconfigure(index, weight=int(index < columns),
+                                           uniform='resources' if index < columns else '', minsize=0)
         for i, panel in enumerate(self.panels):
-            panel.grid(row=0 if i < columns else 1, column=i if i < columns else 0,
-                       columnspan=1 if i < columns else columns, sticky='nsew',
-                       padx=(0 if i == 0 or i >= columns else 6, 0 if i == columns-1 or i >= columns else 6),
+            panel.grid(row=i // columns, column=i % columns, columnspan=1, sticky='nsew',
+                       padx=(0 if i % columns == 0 else 6, 0 if i % columns == columns-1 else 6),
                        pady=(0 if i < columns else 12, 0))
 
     def paint_resources(self):
@@ -146,12 +151,12 @@ class Numbers(ttk.Frame):
         self.food_note.configure(text='第二部金块，用于购买卡牌。' if second else '第一部餐券，观看故事时消耗。' if self.chapter == 1 else '第一部餐券，第二部金块。')
         self.friend_note.configure(text='补满后，在游戏里选择友情人物。' if second else '友情用于第二部；第一部使用餐券。')
         for label, resource in [(self.food_icon, kind), (self.friend_icon, 'friend'), (self.points_icon, 'army')]:
-            label.configure(image=self.icons.get(resource, 24))
+            label.configure(image=self.icons.get(resource, px(self, 24)))
         food = self.current['food'] if self.current else 0
         friend = self.current.get('friend_points', 0) if self.current and self.chapter != 1 else 0
         for labels, resource, value in [(self.food_slots, kind, food), (self.friend_slots, 'friend', friend)]:
             for index, label in enumerate(labels):
-                label.configure(image=self.icons.get(resource, 36, index >= value))
+                label.configure(image=self.icons.get(resource, px(self, 36), index >= value))
 
     def update_story(self, state):
         if state.get('armed') and state.get('character'):

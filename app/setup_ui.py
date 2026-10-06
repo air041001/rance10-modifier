@@ -9,7 +9,7 @@ import runtime
 import settings
 import json
 import save_compat
-from ui_theme import FONT, GREEN, RED, BG, surface, ScrollBody
+from ui_theme import FONT, GREEN, RED, BG, surface, ScrollBody, flow_buttons
 
 
 class Setup(ttk.Frame):
@@ -44,12 +44,10 @@ class Setup(ttk.Frame):
         row = ttk.Frame(paths, style='Surface.TFrame')
         row.pack(fill='x', pady=(8, 0))
         self.save_button = ttk.Button(row, text='保存并检查', style='Primary.TButton', command=self.save_paths)
-        self.save_button.pack(side='left')
         self.detect_button = ttk.Button(row, text='识别正在运行的游戏', command=self.detect)
-        self.detect_button.pack(side='left', padx=10)
         self.controls += [self.save_button, self.detect_button]
         self.compat_button = ttk.Button(row, text='复制兼容信息', command=self.copy_compatibility)
-        self.compat_button.pack(side='left')
+        flow_buttons(row, [self.save_button, self.detect_button, self.compat_button])
         self.controls.append(self.compat_button)
         self.feedback = ttk.Label(paths, text='图鉴从本机游戏生成；存档与实时功能分别识别所需的数据结构。',
                                   style='SurfaceHint.TLabel', wraplength=850)

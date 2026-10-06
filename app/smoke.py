@@ -20,10 +20,24 @@ def run():
     parser.add_argument('--self-test', action='store_true')
     parser.add_argument('--upgrade-library', action='store_true')
     parser.add_argument('--output', required=True)
+    parser.add_argument('--ui-scale', type=int, choices=[100, 125, 150, 175, 200, 250, 300])
+    parser.add_argument('--dpi-layout-only', action='store_true')
     options = parser.parse_args()
-    app = App(auto_connect=False)
+    # Set Tk's point-to-pixel scale before any fonts or widgets are created.
+    # Each CLI invocation uses a separate interpreter, like an actual launch.
+    import tkinter as tk
+    original_init = tk.Tk.__init__
+    def init(root, *args, **kwargs):
+        original_init(root, *args, **kwargs)
+        if options.ui_scale:
+            root.tk.call('tk', 'scaling', 96 / 72 * options.ui_scale / 100)
+    with patch.object(tk.Tk, '__init__', init):
+        app = App(auto_connect=False)
     try:
-        check(app, options)
+        if options.dpi_layout_only:
+            check_dpi_layout(app, options)
+        else:
+            check(app, options)
     finally:
         try:
             app.training.food_session.close()
@@ -318,7 +332,7 @@ def check_new_ui(app, state):
                     for box in [page.search, page.factionbox, page.raritybox, page.versionbox, page.kindbox, page.appearancebox]:
                         right = box.winfo_rootx() + box.winfo_width()
                         assert right <= page.winfo_rootx() + page.winfo_width(), 'Card filter is clipped'
-                    assert page.gallery.canvas.winfo_width() >= page.gallery.W
+                    assert page.gallery.canvas.winfo_width() >= page.gallery.W, ('gallery', page.gallery.canvas.winfo_width(), page.gallery.W, page.winfo_width(), page.detail_panel.winfo_width(), app.winfo_width(), app.sidebar.winfo_width())
                 if page == app.setup:
                     for button in [page.compat_button, page.local_button, page.download_button, page.character_button, page.data_button]:
                         page.scroll.see(button)
@@ -340,3 +354,128 @@ def check_new_ui(app, state):
                               entry_module_theme_and_connection_colours=True,
                               story_progress_and_load_reset=True, theme_keeps_target=True,
                               narrow_card_filters_visible=True)
+
+
+def check_dpi_layout(app, options):
+    """Check readable navigation and reachable controls at display scales."""
+    import ui_theme
+    app.attributes('-alpha', 0)
+    app.cards.loaded = app.training.loaded = True
+    app.cards.gate.ready()
+    app.training.gate.ready()
+    app.training.context_loaded(dict(training_cards=[], manual=True, pending=[], slot=1,
+                                    star_cap=200, enhancement_cap=10))
+    app.numbers.read(dict(food=2, friend_points=1, total_points=22, chapter=1))
+    scale = options.ui_scale or round(float(app.tk.call('tk', 'scaling')) * 72 / 96 * 100)
+    result = dict(version=VERSION, frozen=bool(getattr(sys, 'frozen', False)), scale=scale,
+                  initial_size=app.initial_size, layouts=[])
+    def settle():
+        # Windows delivers native geometry notifications asynchronously.
+        for _ in range(3):
+            app.update()
+            time.sleep(.02)
+    def readable(widget):
+        assert widget.winfo_width() >= widget.winfo_reqwidth(), ('width', widget.cget('text'), widget.winfo_width(), widget.winfo_reqwidth())
+        assert widget.winfo_height() >= widget.winfo_reqheight(), ('height', widget.cget('text'), widget.winfo_height(), widget.winfo_reqheight())
+    def contained(widget, container):
+        assert widget.winfo_rootx() >= container.winfo_rootx(), ('left', str(widget))
+        assert widget.winfo_rootx()+widget.winfo_width() <= container.winfo_rootx()+container.winfo_width(), ('right', str(widget))
+    def reachable(button, scroll):
+        # Nested panes can reflow when their outer scrollbar appears. Settle
+        # that resize and bring the target into each containing viewport.
+        ancestor = scroll.master
+        outer = None
+        while ancestor is not None:
+            if isinstance(ancestor, ui_theme.ScrollBody):
+                outer = ancestor
+                break
+            ancestor = getattr(ancestor, 'master', None)
+        for _ in range(3):
+            scroll.see(button)
+            settle()
+            if outer:
+                outer.see(button)
+                settle()
+        readable(button)
+        contained(button, scroll.canvas)
+        y = button.winfo_rooty() - scroll.canvas.winfo_rooty()
+        assert 0 <= y and y+button.winfo_height() <= scroll.canvas.winfo_height(), ('vertical', button.cget('text'), y, scroll.canvas.winfo_height())
+    sizes = [app.initial_size, (ui_theme.px(app, 900), ui_theme.px(app, 700)),
+             (ui_theme.px(app, 1280), ui_theme.px(app, 820))]
+    # Exercise a 4K-sized client area as well as the real monitor's smaller
+    # work area. This is simulated geometry, not a physical-monitor test.
+    app.maxsize(6000, 4000)
+    sizes.append((3840, 2160))
+    for mode in ['dark', 'light']:
+        if ui_theme.MODE != mode:
+            app.toggle_theme(persist=False)
+        for width, height in sizes:
+            app.geometry(f'{width}x{height}')
+            settle()
+            readable(app.brand_title)
+            nav_heights = []
+            for row in app.tabs.items.values():
+                for label in row[4:]:
+                    readable(label)
+                app.navigation_scroll.see(row[0])
+                app.update()
+                contained(row[0], app.sidebar)
+                nav_heights.append(row[0].winfo_height())
+            assert len(set(nav_heights)) == 1
+            for page in [app.numbers, app.cards, app.training, app.records, app.setup]:
+                app.tabs.select(page)
+                settle()
+                readable(app.theme_button)
+                contained(app.theme_button, app)
+                readable(app.page_title)
+                if page == app.numbers:
+                    for button in [page.fill_button, page.friend_button, page.set_button, page.add_button, page.story_link]:
+                        reachable(button, page.scroll)
+                    readable(page.chapter_box)
+                    contained(page.chapter_box, page.scroll.canvas)
+                elif page == app.cards:
+                    for box in [page.factionbox, page.raritybox, page.versionbox, page.kindbox, page.appearancebox]:
+                        readable(box)
+                        contained(box, page)
+                    assert page.gallery.canvas.winfo_width() >= page.gallery.W, ('gallery', page.gallery.canvas.winfo_width(), page.gallery.W, page.winfo_width(), page.detail_panel.winfo_width(), app.winfo_width(), app.sidebar.winfo_width(), page.center.winfo_width(), page.center.sashpos(0))
+                    readable(page.choose_button)
+                    for button in [page.apply_button, page.suggest_button, page.choose_button]:
+                        reachable(button, page.content)
+                    assert int(app.theme.lookup('Treeview', 'rowheight')) >= font.nametofont('TkDefaultFont').metrics('linespace')
+                elif page == app.training:
+                    for button in [page.star_button, page.enhancement_button, page.food_button, page.cancel_food_button]:
+                        reachable(button, page.detail_scroll)
+                        y = button.winfo_rooty() - page.content.canvas.winfo_rooty()
+                        assert 0 <= y and y+button.winfo_height() <= page.content.canvas.winfo_height(), ('outer training', button.cget('text'), y, button.winfo_height(), page.content.canvas.winfo_height(), page.content.body.winfo_height(), page.content.body.winfo_reqheight(), page.content.canvas.yview())
+                    assert page.active is None
+                elif page == app.setup:
+                    for button in [page.save_button, page.detect_button, page.compat_button, page.local_button, page.download_button, page.character_button, page.data_button]:
+                        reachable(button, page.scroll)
+            result['layouts'].append(dict(theme=mode, size=[app.winfo_width(), app.winfo_height()],
+                sidebar_width=app.sidebar.winfo_width(), nav_height=nav_heights[0], resource_columns=app.numbers._columns,
+                gallery_cell=[app.cards.gallery.W, app.cards.gallery.H]))
+    # A synthetic thumbnail exercises the actual scaled image and hitbox,
+    # without requiring any particular character in the user's collection.
+    from PIL import Image
+    gallery = app.cards.gallery
+    app.tabs.select(app.cards)
+    settle()
+    row = dict(id='Lv48 测试人物', faction='其他', star=10, rarity='特级', owned=False, available=True)
+    details, selected = [], []
+    with tempfile.TemporaryDirectory(prefix='dpi-card-') as folder:
+        folder = Path(folder)
+        Image.new('RGB', (64, 96), '#c4a46b').save(folder / 'fixture.png')
+        with patch.object(app_paths, 'IMAGE_DIR', folder), \
+             patch.object(app.images, 'entries', {row['id']: dict(file='fixture.png')}), \
+             patch.object(gallery, 'on_detail', details.append), \
+             patch.object(gallery, 'on_toggle', selected.append):
+            gallery.set_cards([row], set())
+            settle()
+            photo = app.images.get(row['id'])
+            assert (photo.width(), photo.height()) == ui_theme.px(app, (136, 204))
+            gutter = max(0, (gallery.canvas.winfo_width() - gallery.cols * gallery.W) // 2)
+            gallery.canvas.event_generate('<Button-1>', x=gutter+ui_theme.px(app, 24), y=ui_theme.px(app, 24))
+            settle()
+            assert details == [row] and selected == [row], 'Scaled checkbox click missed its card'
+    result['scaled_thumbnail_and_checkbox'] = True
+    Path(options.output).write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')

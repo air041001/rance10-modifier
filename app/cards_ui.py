@@ -6,7 +6,7 @@ import unicodedata
 import engine
 import app_paths
 from gallery import Gallery
-from ui_theme import BG, SURFACE, TEXT, MUTED, LINE, BLUE, TINT, GOLD, FONT, surface, ScrollBody, LibraryGate
+from ui_theme import BG, SURFACE, TEXT, MUTED, LINE, BLUE, TINT, GOLD, FONT, surface, ScrollBody, LibraryGate, px, flow_buttons
 
 
 class Cards(ttk.Frame):
@@ -15,10 +15,11 @@ class Cards(ttk.Frame):
         self.owner = owner
         self.context, self.saves, self.selected, self.visible = None, [], set(), []
         self.active, self.preview_photo, self.loaded = None, None, False
-        self.content = ttk.Frame(self)
+        self.content = ScrollBody(self, background=BG, autohide=True, stretch=True)
         self.content.pack(fill="both", expand=True)
+        content = self.content.body
 
-        row = surface(self.content, 12)
+        row = surface(content, 12)
         row.pack(fill='x')
         ttk.Label(row, text='目标存档', style='Surface.TLabel').pack(side='left', padx=(0, 12))
         self.savebox = ttk.Combobox(row, state='readonly', font=(FONT, 10))
@@ -26,11 +27,11 @@ class Cards(ttk.Frame):
         self.savebox.bind('<<ComboboxSelected>>', lambda e: self.load_selected())
         self.refresh_button = ttk.Button(row, text='刷新存档', command=self.refresh)
         self.refresh_button.pack(side='left', padx=(10, 0))
-        self.hint = ttk.Label(self.content, text='先保存到手动存档位，添加卡牌后重新读档生效。',
+        self.hint = ttk.Label(content, text='先保存到手动存档位，添加卡牌后重新读档生效。',
                               style='Hint.TLabel', wraplength=990)
         self.hint.pack(fill='x', pady=(9, 12))
 
-        row = ttk.Frame(self.content)
+        row = ttk.Frame(content)
         row.pack(fill='x', pady=(0, 12))
         self.count_text = tk.StringVar(value='选择存档，查看持有卡牌')
         ttk.Label(row, textvariable=self.count_text, style='Summary.TLabel').pack(side='left')
@@ -42,7 +43,7 @@ class Cards(ttk.Frame):
         self.goal_spin.pack(side='left')
         self.goal_value.trace_add('write', lambda *a: self.update_actions())
 
-        filters = ttk.Frame(self.content)
+        filters = ttk.Frame(content)
         self.filters = filters
         filters.pack(fill='x', pady=(0, 6))
         filters.columnconfigure(0, weight=1)
@@ -79,20 +80,20 @@ class Cards(ttk.Frame):
         self.appearancebox.pack(side='left')
         self.appearancebox.bind('<<ComboboxSelected>>', lambda e: self.filter())
         filters.bind('<Configure>', self.layout_filters)
-        checks = ttk.Frame(self.content)
+        checks = ttk.Frame(content)
         checks.pack(fill='x', pady=(0, 10))
-        ttk.Label(checks, text='卡名 / 技能', style='Hint.TLabel').pack(side='left', padx=(0, 18))
+        check_controls = [ttk.Label(checks, text='卡名 / 技能', style='Hint.TLabel')]
         self.only_missing = tk.BooleanVar(value=False)
         self.only_available = tk.BooleanVar(value=False)
         self.only_selected = tk.BooleanVar(value=False)
         for text, var in [('仅未持有', self.only_missing), ('仅可添加', self.only_available), ('已选清单', self.only_selected)]:
-            ttk.Checkbutton(checks, text=text, variable=var, command=self.filter).pack(side='left', padx=(0, 14))
+            check_controls.append(ttk.Checkbutton(checks, text=text, variable=var, command=self.filter))
         self.mode = tk.StringVar(value='卡图')
         modebox = ttk.Combobox(checks, values=['卡图', '列表'], textvariable=self.mode, state='readonly', width=5, font=(FONT, 10))
-        modebox.pack(side='right')
+        flow_buttons(checks, check_controls + [modebox])
         modebox.bind('<<ComboboxSelected>>', lambda e: self.switch_view())
 
-        actions = ttk.Frame(self.content)
+        actions = ttk.Frame(content)
         actions.pack(side='bottom', fill='x', pady=(12, 0))
         buttons = ttk.Frame(actions)
         buttons.pack(fill='x')
@@ -105,7 +106,8 @@ class Cards(ttk.Frame):
         self.result_text = ttk.Label(actions, text='点击卡图查看技能；点击方框或双击卡图勾选。', style='Hint.TLabel')
         self.result_text.pack(anchor='w', pady=(8, 0))
 
-        center = ttk.Panedwindow(self.content, orient='horizontal')
+        center = ttk.Panedwindow(content, orient='horizontal')
+        self.center = center
         center.pack(fill='both', expand=True)
         self.left = ttk.Frame(center)
         center.add(self.left, weight=1)
@@ -117,11 +119,14 @@ class Cards(ttk.Frame):
         for key, label, width in [('check', '选', 40), ('name', '卡牌', 190), ('kind', '类型', 54), ('rarity', '稀有度', 72),
                                   ('faction', '阵营', 78), ('star', '星级', 54), ('owned', '状态', 96)]:
             self.tree.heading(key, text=label)
-            self.tree.column(key, width=width, minwidth=width, stretch=key == 'name',
+            self.tree.column(key, width=px(self, width), minwidth=px(self, width), stretch=key == 'name',
                              anchor='center' if key in ['check', 'star', 'rarity', 'owned'] else 'w')
         scrollbar = ttk.Scrollbar(self.list_frame, orient='vertical', command=self.tree.yview)
         self.tree.configure(yscrollcommand=scrollbar.set)
         scrollbar.pack(side='right', fill='y')
+        horizontal = ttk.Scrollbar(self.list_frame, orient='horizontal', command=self.tree.xview)
+        self.tree.configure(xscrollcommand=horizontal.set)
+        horizontal.pack(side='bottom', fill='x')
         self.tree.pack(side='left', fill='both', expand=True)
         self.tree.tag_configure('checked', background=TINT)
         self.tree.tag_configure('owned', foreground=MUTED)
@@ -132,7 +137,8 @@ class Cards(ttk.Frame):
         self.tree.bind('<space>', self.list_space)
 
         right = surface(center, 16)
-        right.configure(width=252)
+        self.detail_panel = right
+        right.configure(width=px(self, 252))
         right.pack_propagate(False)
         center.add(right, weight=0)
         self.choose_button = ttk.Button(right, text='选入清单', command=self.choose_active)
@@ -149,6 +155,24 @@ class Cards(ttk.Frame):
         self.details = ttk.Label(detailbody, text='', style='Surface.TLabel', wraplength=194, justify='left', anchor='nw')
         self.details.pack(fill='x', pady=(14, 0))
         self.detail_scroll.bind_children()
+        detailbody.bind('<Configure>', lambda e: [label.configure(wraplength=max(1, e.width))
+                        for label in [self.title, self.card_hint, self.details]])
+        def layout_detail(event):
+            # Keep at least one complete card visible; the detail text wraps
+            # and scrolls when the display leaves less room for the right pane.
+            minimum_left = self.gallery.W + self.gallery.scroll.winfo_reqwidth()
+            right_width = min(px(self, 252), event.width - minimum_left - 12)
+            right_width = max(self.choose_button.winfo_reqwidth() + 34, right_width)
+            if event.width > minimum_left + right_width:
+                center.sashpos(0, event.width - right_width - 12)
+        center.bind('<Configure>', layout_detail)
+        def bind_outer(widget):
+            if widget is center:
+                return  # Card grid and detail column keep their own scrolling.
+            widget.bind('<MouseWheel>', self.content.wheel)
+            for child in widget.winfo_children():
+                bind_outer(child)
+        bind_outer(content)
         self.bind('<Configure>', lambda e: self.hint.configure(wraplength=max(400, e.width - 48)))
         self.gate = LibraryGate(self, self.content, owner, self.refresh)
         self.update_actions()
@@ -161,16 +185,26 @@ class Cards(ttk.Frame):
         self.gallery.schedule()
 
     def layout_filters(self, event):
-        narrow = event.width < 820
-        if getattr(self, '_narrow_filters', None) == narrow:
-            return
-        self._narrow_filters = narrow
-        self.search.grid_configure(row=0, column=0, columnspan=3 if narrow else 1,
-                                   sticky='ew', padx=(0, 0 if narrow else 10), pady=(0, 8 if narrow else 0))
-        for index, box in enumerate([self.factionbox, self.raritybox, self.versionbox]):
-            box.grid_configure(row=1 if narrow else 0, column=index if narrow else index+1,
-                               sticky='w' if narrow else 'ew', padx=(0, 10))
-        self.extra_filters.grid_configure(row=2 if narrow else 1, columnspan=3 if narrow else 4)
+        boxes = [self.factionbox, self.raritybox, self.versionbox]
+        width = event.width
+        broad = width >= max(px(self, 820), sum(b.winfo_reqwidth()+10 for b in boxes) + px(self, 220))
+        self.search.grid_configure(row=0, column=0, columnspan=1 if broad else 4,
+                                   sticky='ew', padx=(0, 10 if broad else 0), pady=(0, 0 if broad else 8))
+        row, column, used = (0, 1, px(self, 220)) if broad else (1, 0, 0)
+        for box in boxes:
+            size = box.winfo_reqwidth() + 10
+            if not broad and used and used + size > width:
+                row, column, used = row+1, 0, 0
+            box.grid_configure(row=row, column=column, sticky='w', padx=(0, 10), pady=(0, 8))
+            used, column = used + size, column+1
+        self.extra_filters.grid_configure(row=row+1, columnspan=4, sticky='ew')
+        for box in [self.kindbox, self.appearancebox]:
+            box.pack_forget()
+        extra_row, used = 0, self.kindbox.winfo_reqwidth() + 10
+        self.kindbox.grid(row=0, column=0, sticky='w', padx=(0, 10))
+        if used + self.appearancebox.winfo_reqwidth() > width:
+            extra_row = 1
+        self.appearancebox.grid(row=extra_row, column=1 if extra_row == 0 else 0, sticky='w', pady=(8 if extra_row else 0, 0))
 
     def refresh(self):
         self.context = None
