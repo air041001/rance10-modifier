@@ -47,6 +47,8 @@ internal static class Harness {
             "zero based runtime chapters use the correct display labels");
         Assert(RuntimeProfile.DisplayChapter(-1)==null && RuntimeProfile.DisplayChapter(2)==null,
             "unknown chapters are not labelled as the first or second part");
+        var withoutBattle=RuntimeTypes.Decode(Image(0x400000,0),0x400000,false,true);
+        Assert(withoutBattle.Count==5,"missing optional battle arrays preserve numeric resources");
         return 0;
     }
 }

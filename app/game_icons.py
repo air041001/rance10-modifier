@@ -9,7 +9,7 @@ import app_paths
 import settings
 
 NAMES = dict(ticket=('餐券积分', '食券ポイント'), gold=('金块积分', '金塊ポイント'),
-             friend=('友情积分', '友情ポイント'))
+             friend=('友情积分', '友情ポイント'), battle=('战果积分', '戦果ポイント'))
 
 
 def cache_dir(game):
@@ -124,6 +124,9 @@ class Icons:
             pen.line([(12, 20), (7, 39), (20, 46), (32, 33), (44, 46), (57, 39), (52, 20)],
                      fill=colour, width=4)
             pen.line([(12, 20), (25, 26), (32, 20), (40, 26), (52, 20)], fill=colour, width=4)
+        elif kind == 'battle':
+            pen.line((15, 52, 15, 10), fill=colour, width=3)
+            pen.polygon([(16, 11), (54, 11), (43, 24), (54, 37), (16, 37)], outline=colour, width=3)
         else:
             for x, y in [(25, 12), (43, 20)]:
                 pen.ellipse((x-6, y-6, x+6, y+6), fill=colour)

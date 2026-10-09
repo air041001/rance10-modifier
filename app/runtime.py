@@ -27,13 +27,22 @@ def discover():
     return _invoke(['--discover']).get('processes', [])
 
 
-def run(action='probe', amount=None):
-    if action not in ['probe', 'fill3', 'fillfriend3', 'setpoints', 'addpoints']:
+def run(action='probe', amount=None, country=None):
+    if action not in ['probe', 'fill3', 'fillfriend3', 'fillbattle3', 'addbattle', 'setpoints', 'addpoints']:
         raise ValueError('不支持的操作。')
+    if action in ('fillbattle3', 'addbattle'):
+        if type(country) is not int or country not in range(1, 5):
+            raise ValueError('请选择四国之一的战果。')
+        if action == 'addbattle' and (type(amount) is not int or amount not in (-1, 1)):
+            raise ValueError('战果每次增加或减少 1 点。')
+    elif country is not None:
+        raise ValueError('该操作不使用国家选择。')
     profile = engine.check_live_version()
     args = ['--' + action]
     if amount is not None:
         args.append(str(int(amount)))
+    if country is not None:
+        args += ['--country', str(country)]
     args += ['--game-dir', str(settings.game_dir()), '--runtime-profile', str(profile)]
     data = _invoke(args)
     if action != 'probe':

@@ -7,6 +7,8 @@ import settings
 from game_icons import Icons
 from ui_theme import BG, GREEN, RED, MUTED, FONT, surface, ScrollBody, px
 
+COUNTRIES = ('利萨斯', '赫尔曼', '赛斯', '自由都市')
+
 
 class Numbers(ttk.Frame):
     def __init__(self, master, owner):
@@ -42,11 +44,24 @@ class Numbers(ttk.Frame):
         self.fill_button.pack(side='bottom', fill='x')
         self.friend_title, self.friend_icon = self.heading(friendship, '友情')
         self.friend_points, _ = self.metric(friendship, '/ 3 点')
+        self.country_row = ttk.Frame(friendship, style='Surface.TFrame')
+        ttk.Label(self.country_row, text='国家', style='SurfaceHint.TLabel').pack(side='left', padx=(0, 6))
+        self.battle_country = tk.StringVar(value=COUNTRIES[0])
+        self.country_box = ttk.Combobox(self.country_row, values=COUNTRIES, textvariable=self.battle_country,
+                                        state='readonly', width=10)
+        self.country_box.pack(side='left', fill='x', expand=True)
+        self.country_box.bind('<<ComboboxSelected>>', lambda e: self.paint_resources())
         self.friend_slots = self.slots(friendship)
         self.friend_note = ttk.Label(friendship, text='第二部在游戏中选择友情人物。', style='SurfaceHint.TLabel', wraplength=px(self, 230))
         self.friend_note.pack(fill='x', pady=(8, 12))
-        self.friend_button = ttk.Button(friendship, text='补满 3 点友情', style='Primary.TButton', command=lambda: self.act('fillfriend3'))
+        self.friend_button = ttk.Button(friendship, text='补满 3 点友情', style='Primary.TButton', command=self.fill_middle)
         self.friend_button.pack(side='bottom', fill='x')
+        self.battle_actions = ttk.Frame(friendship, style='Surface.TFrame')
+        self.battle_actions.columnconfigure((0, 1), weight=1, uniform='battle_actions')
+        self.battle_minus = ttk.Button(self.battle_actions, text='减少 1 点', command=lambda: self.act_battle('addbattle', -1))
+        self.battle_minus.grid(row=0, column=0, sticky='ew', padx=(0, 4))
+        self.battle_plus = ttk.Button(self.battle_actions, text='增加 1 点', command=lambda: self.act_battle('addbattle', 1))
+        self.battle_plus.grid(row=0, column=1, sticky='ew', padx=(4, 0))
         _, self.points_icon = self.heading(points, '部队加成点数')
         self.points, _ = self.metric(points, '总点数')
         point_note = ttk.Label(points, text='包含已用点数，已有加成会保留。', style='SurfaceHint.TLabel', wraplength=px(self, 230))
@@ -143,20 +158,57 @@ class Numbers(ttk.Frame):
 
     def paint_resources(self):
         second = self.chapter == 2
+        battle = self.chapter == 1
         kind = 'gold' if second else 'ticket'
+        middle = 'battle' if battle else 'friend'
         title = '金块' if second else ('餐券' if self.chapter == 1 else '餐券 / 金块')
         self.food_title.configure(text=title)
         self.food_unit.configure(text='/ 3 个' if second else '/ 3 张')
         self.fill_button.configure(text='补满 3 个金块' if second else '补满 3 张餐券' if self.chapter == 1 else '补满餐券 / 金块')
         self.food_note.configure(text='第二部金块，用于购买卡牌。' if second else '第一部餐券，观看故事时消耗。' if self.chapter == 1 else '第一部餐券，第二部金块。')
-        self.friend_note.configure(text='补满后，在游戏里选择友情人物。' if second else '友情用于第二部；第一部使用餐券。')
-        for label, resource in [(self.food_icon, kind), (self.friend_icon, 'friend'), (self.points_icon, 'army')]:
+        self.friend_title.configure(text='战果' if battle else '友情')
+        self.friend_button.configure(text='补满 3 点战果' if battle else '补满 3 点友情')
+        note = '选择任务所在国家；四国战果分别保存，范围 0～3。' if battle else '补满后，在游戏里选择友情人物。'
+        if battle:
+            self.country_row.pack(fill='x', pady=(0, 8), before=self.friend_points.master)
+            self.battle_actions.pack(side='bottom', fill='x', pady=(0, 8))
+            if self.current and self.current.get('battle_points') is None:
+                note = self.current.get('battle_error') or '暂时无法读取战果，请刷新。'
+        else:
+            self.country_row.pack_forget()
+            self.battle_actions.pack_forget()
+        self.friend_note.configure(text=note)
+        for label, resource in [(self.food_icon, kind), (self.friend_icon, middle), (self.points_icon, 'army')]:
             label.configure(image=self.icons.get(resource, px(self, 24)))
         food = self.current['food'] if self.current else 0
-        friend = self.current.get('friend_points', 0) if self.current and self.chapter != 1 else 0
-        for labels, resource, value in [(self.food_slots, kind, food), (self.friend_slots, 'friend', friend)]:
+        friend = self.middle_value()
+        self.friend_points.configure(text='—' if friend is None else str(friend))
+        for labels, resource, value in [(self.food_slots, kind, food), (self.friend_slots, middle, friend or 0)]:
             for index, label in enumerate(labels):
                 label.configure(image=self.icons.get(resource, px(self, 36), index >= value))
+        self.update_actions()
+
+    def middle_value(self):
+        if not self.current:
+            return None
+        if self.chapter == 1:
+            points = self.current.get('battle_points')
+            if not isinstance(points, (tuple, list)) or len(points) != 4:
+                return None
+            return points[self.country_id() - 1]
+        return self.current.get('friend_points', 0)
+
+    def country_id(self):
+        return COUNTRIES.index(self.battle_country.get()) + 1
+
+    def fill_middle(self):
+        if self.chapter == 1:
+            self.act_battle('fillbattle3')
+        else:
+            self.act('fillfriend3')
+
+    def act_battle(self, action, amount=None):
+        self.act(action, amount, self.country_id())
 
     def update_story(self, state):
         if state.get('armed') and state.get('character'):
@@ -211,7 +263,12 @@ class Numbers(ttk.Frame):
         self.refresh_button.configure(state='disabled' if busy else 'normal')
         for button in [self.fill_button, self.set_button, self.add_button]:
             button.configure(state='normal' if self.current and not busy else 'disabled')
-        self.friend_button.configure(state='normal' if self.current and self.chapter != 1 and not busy else 'disabled')
+        available = self.middle_value() is not None and not busy
+        self.friend_button.configure(state='normal' if available else 'disabled')
+        value = self.middle_value()
+        self.battle_minus.configure(state='normal' if available and self.chapter == 1 and value > 0 else 'disabled')
+        self.battle_plus.configure(state='normal' if available and self.chapter == 1 and value < 3 else 'disabled')
+        self.country_box.configure(state='disabled' if busy else 'readonly')
         self.spin.configure(state='disabled' if busy else 'normal')
         self.story_link.configure(state='disabled' if busy or self.chapter == 2 else 'normal')
         self.story_cancel.configure(state='disabled' if busy else 'normal')
@@ -270,7 +327,6 @@ class Numbers(ttk.Frame):
             part = {1: '第一部', 2: '第二部'}.get(self.chapter)
             text = part + (' · 手动显示' if manual else ' · 自动识别') if part else '已连接 · 章节未识别'
             self.connection.configure(text=text, foreground=GREEN)
-            self.friend_points.configure(text='—' if self.chapter == 1 else str(self.current.get('friend_points', 0)))
         self.paint_resources()
         self.render_story()
 
@@ -292,7 +348,7 @@ class Numbers(ttk.Frame):
             return
         self.act('setpoints', amount)
 
-    def act(self, action, amount=None):
+    def act(self, action, amount=None, country=None):
         self.generation += 1
         def done(data):
             self.read(data)
@@ -300,6 +356,8 @@ class Numbers(ttk.Frame):
                 message = '%s：%d → %d，已补满。' % (self.food_title.cget('text'), data['food_before'][0], data['food'])
             elif action == 'fillfriend3':
                 message = '友情：%d → %d 点，已补满。' % (data['food_before'][2], data['friend_points'])
+            elif action in ('fillbattle3', 'addbattle'):
+                message = '%s战果：%d → %d 点。' % (COUNTRIES[country-1], data['battle_before'][country-1], data['battle_points'][country-1])
             else:
                 message = '部队总点数：%d → %d。已有加成会保留。' % (data['bonus_before'][2], data['total_points'])
             self.state.configure(text=message, foreground=GREEN)
@@ -307,4 +365,5 @@ class Numbers(ttk.Frame):
             self.owner.refresh_history()
         def failed(message):
             self.state.configure(text=message, foreground=RED)
-        self.owner.run(lambda: runtime.run(action, amount), done, '正在修改当前游戏数值…', failed)
+        self.owner.run(lambda: runtime.run(action, amount, country=country) if country is not None else runtime.run(action, amount),
+                       done, '正在修改当前游戏数值…', failed)

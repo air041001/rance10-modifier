@@ -287,6 +287,101 @@ def food_profile(ain):
                 GetCharacter=get['index'], IsMax=is_max['index'])
 
 
+def battle_profile(ain):
+    """Resolve the four country counters from the game's flag accessors.
+
+    The flag base and VM global are installation data, not executable offsets.
+    Check both read/write paths before treating any flag as a battle result.
+    """
+    names = {0: 'P', 1: 'POP', 2: 'REF', 4: 'G', 5: 'L', 9: 'ADD', 10: 'SUB',
+             21: 'LE', 24: 'EQ', 25: 'SET', 41: 'DUP2', 42: 'DUP_X2',
+             44: 'JUMP', 45: 'IFZ', 46: 'IFNZ', 47: 'RET', 48: 'CALL',
+             90: 'HLL', 91: 'S', 98: 'EOF', 102: 'SWAP', 109: 'R_SET',
+             119: 'DEL', 123: 'DUP_U2'}
+    functions = sorted(ain['functions'], key=lambda f: f['address'])
+    symbols = {f['index']: f['name'] for f in functions}
+    globals_ = {g['index']: g['name'] for g in ain['globals']}
+
+    def shape(name):
+        matches = [(i, f) for i, f in enumerate(functions) if f['name'] == name]
+        if len(matches) != 1:
+            raise ValueError('未找到战果访问入口：' + name)
+        index, function = matches[0]
+        start = function['address']
+        end = functions[index + 1]['address'] - 6 if index + 1 < len(functions) else len(ain['code'])
+        if not 0 <= start < end <= len(ain['code']) or end - start > 2048:
+            raise ValueError('战果访问代码范围无效。')
+        pos, operations, locations = start, [], {}
+        while pos < end:
+            locations[pos] = len(operations)
+            opcode = struct.unpack_from('<H', ain['code'], pos)[0]
+            if opcode not in names:
+                raise ValueError('战果访问规则需要适配。')
+            count = 3 if opcode == 90 else int(opcode in (0, 44, 45, 46, 48, 98))
+            pos += 2
+            args = list(struct.unpack_from('<' + 'i' * count, ain['code'], pos))
+            pos += count * 4
+            if pos > end:
+                raise ValueError('战果访问代码不完整。')
+            operations.append([opcode] + args)
+        tokens = []
+        for index, row in enumerate(operations):
+            opcode, args = row[0], row[1:]
+            if opcode == 98:
+                if index != len(operations) - 1:
+                    raise ValueError('战果函数结束位置无效。')
+                continue
+            if opcode == 0 and index and operations[index - 1][0] == 4:
+                args = [globals_.get(args[0], '?')]
+            elif opcode == 48:
+                args = [symbols.get(args[0], '?')]
+            elif opcode in (44, 45, 46):
+                if args[0] not in locations:
+                    raise ValueError('战果访问分支无效。')
+                args = [locations[args[0]]]
+            elif opcode == 90:
+                # Library/function ordinals can move. This code is not called
+                # by the modifier; the typed int array is accessed directly.
+                args = ['array', args[2]]
+            tokens.append(names[opcode] + (':' + ','.join(map(str, args)) if args else ''))
+        return tokens
+
+    get = shape('TadaFlagFunc::GetAchieve')
+    if len(get) != 37 or not get[2].startswith('P:') or not get[20].startswith('P:'):
+        raise ValueError('战果国家索引需要适配。')
+    first, last = int(get[2][2:]), int(get[20][2:])
+    expected_get = ('L P:1 P:{first} L P:0 REF P:1 SUB ADD SET POP P:{first} L P:1 REF LE '
+                    'IFZ:25 L P:1 REF P:{last} LE IFZ:25 P:1 JUMP:26 P:0 IFNZ:28 JUMP:33 '
+                    'L P:1 REF CALL:TadaFlagFunc::Get RET P:0 RET P:0 RET').format(first=first, last=last)
+    expected_set = ('L P:2 P:{first} L P:0 REF P:1 SUB ADD SET POP P:{first} L P:2 REF LE '
+                    'IFZ:25 L P:2 REF P:{last} LE IFZ:25 P:1 JUMP:26 P:0 IFNZ:28 JUMP:35 '
+                    'L P:2 REF L P:1 REF CALL:TadaFlagFunc::Set RET').format(first=first, last=last)
+    checks = {
+        'TadaFlagFunc::GetAchieve': expected_get,
+        'TadaFlagFunc::SetAchieve': expected_set,
+        'TadaFlagFunc::Get': 'G P:tt REF L P:0 REF HLL:array,10 L P:1 REF DEL L DUP_X2 POP P:1 DUP_X2 POP R_SET DUP_U2 P:-1 EQ IFZ:33 POP POP P:-1 L SWAP P:3 SWAP SET POP L P:3 REF RET P:0 RET',
+        'TadaFlagFunc::Set': 'G P:tt REF L P:0 REF HLL:array,10 L P:2 REF DEL L DUP_X2 POP P:2 DUP_X2 POP R_SET L P:1 REF SET POP L P:2 DUP2 REF DEL P:-1 SET POP RET',
+    }
+    for name, expected in checks.items():
+        if shape(name) != expected.split():
+            raise ValueError('战果访问规则需要适配：' + name)
+    flags = [g for g in ain['globals'] if g['name'] == 'tt']
+    if (len(flags) != 1 or flags[0]['type'][0] not in (79, 80) or
+            flags[0]['type'][3] != (10, -1, 0, None) or not 0 <= first <= last < 10000 or last - first != 3):
+        raise ValueError('战果旗标数组需要适配。')
+    country = next((s for s in ain['structures'] if s['name'] == 'Country'), None)
+    if not country:
+        raise ValueError('缺少战果国家结构。')
+    ids = [(i, m) for i, m in enumerate(country['members']) if m['name'] == 'm_id']
+    if len(ids) != 1 or ids[0][1]['type'][0] != 10:
+        raise ValueError('战果国家字段需要适配。')
+    field = ids[0][0]
+    if (shape('Country@GetAchieve') != ('S P:%d REF CALL:TadaFlagFunc::GetAchieve RET P:0 RET' % field).split() or
+            shape('Country@SetAchieve') != ('S P:%d REF P:3 L P:0 REF HLL:array,-1 CALL:TadaFlagFunc::SetAchieve RET' % field).split()):
+        raise ValueError('战果国家访问规则或上限需要适配。')
+    return dict(FlagGlobal=flags[0]['index'], FirstIndex=first, LastIndex=last, Maximum=3)
+
+
 def prepare(game):
     game = Path(game)
     raw = (game / 'Rance10.ain').read_bytes()
@@ -299,7 +394,7 @@ def prepare(game):
             codepage = {'CP936': 936, 'CP932': 932}[catalog['source']['encoding']]
     except (OSError, ValueError, KeyError):
         pass
-    identity = hashlib.sha256(('%s:%s:%d:4' % (ain_hash, exe_hash, codepage)).encode()).hexdigest()
+    identity = hashlib.sha256(('%s:%s:%d:5' % (ain_hash, exe_hash, codepage)).encode()).hexdigest()
     folder = app_paths.CACHE_DIR / 'live-profiles'
     target = folder / (identity + '.json')
     if target.is_file():
@@ -320,6 +415,11 @@ def prepare(game):
     except (ValueError, KeyError, struct.error) as exc:
         data['Food'] = None
         data['FoodError'] = str(exc)
+    try:
+        data['Battle'] = battle_profile(ain)
+    except (ValueError, KeyError, struct.error) as exc:
+        data['Battle'] = None
+        data['BattleError'] = str(exc)
     proof = bytearray(ain['code'])
     if data['Food']:
         food = data['Food']

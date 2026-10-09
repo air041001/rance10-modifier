@@ -143,6 +143,8 @@ class LiveProfileTests(unittest.TestCase):
                 file, descriptor = live_profile.prepare(game)
                 self.assertEqual(descriptor['Fields']['PlayerCommonParam'][0], 0)
                 self.assertIsNone(descriptor['Food'])
+                self.assertIsNone(descriptor['Battle'])
+                self.assertIn('战果', descriptor['BattleError'])
                 self.assertIn('筛选入口', descriptor['FoodError'])
                 file.write_text('{}', encoding='utf-8')
                 self.assertEqual(live_profile.prepare(game)[1], descriptor)
@@ -205,7 +207,7 @@ class LiveProfileTests(unittest.TestCase):
             self.assertEqual(built.returncode, 0, built.stdout.decode(errors='replace'))
             result = subprocess.run([str(executable)], capture_output=True, timeout=15)
             self.assertEqual(result.returncode, 0, result.stderr.decode(errors='replace'))
-            self.assertEqual(result.stdout.count(b'PASS '), 6)
+            self.assertEqual(result.stdout.count(b'PASS '), 7)
 
 
 if __name__ == '__main__':

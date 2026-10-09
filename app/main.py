@@ -202,6 +202,9 @@ class App(tk.Tk):
                         summary = '餐券 / 金块：%s → %s' % (r['food_before'][0], r['food'])
                     elif r.get('action') == 'fillfriend3':
                         summary = '第二部友情：%s → %s点' % (r['food_before'][2], r['friend_points'])
+                    elif r.get('action') in ['fillbattle3', 'addbattle']:
+                        index = r['battle_country'] - 1
+                        summary = '%s战果：%s → %s点' % (r['battle_country_name'], r['battle_before'][index], r['battle_points'][index])
                     elif r.get('action') in ['setpoints', 'addpoints']:
                         summary = '部队总点数：%s → %s' % (r['bonus_before'][2], r['total_points'])
                     elif r.get('action') == 'cards':
@@ -215,7 +218,7 @@ class App(tk.Tk):
                     recent.append((when, summary))
                 except (ValueError, KeyError, TypeError):
                     continue
-        content = '\n\n'.join(reversed(lines)) if lines else '本修改器还没有执行修改。\n\n餐券、金块、友情与部队点数：点击按钮后即时生效，随后可正常保存游戏。\n\n卡牌扩充：先保存当前进度，选择存档与卡牌；添加完成后重新读档。'
+        content = '\n\n'.join(reversed(lines)) if lines else '本修改器还没有执行修改。\n\n餐券、金块、战果、友情与部队点数：点击按钮后即时生效，随后可正常保存游戏。\n\n卡牌扩充：先保存当前进度，选择存档与卡牌；添加完成后重新读档。'
         self.history.configure(state='normal')
         self.history.delete('1.0', 'end')
         self.history.insert('1.0', content)

@@ -16,13 +16,18 @@ internal sealed class FoodProfile {
     public string SpanHash;
 }
 
+internal sealed class BattleProfile {
+    public int FlagGlobal, FirstIndex, LastIndex, Maximum;
+}
+
 internal sealed class RuntimeProfile {
     public int Schema, GlobalCount, PlayerGlobal, BonusGlobal, CharacterGlobal, CardGlobal, CodeLength, CodePage;
     public int GameGlobal = -1;
-    public string AinHash, ExeHash, CodeHash, FoodError;
+    public string AinHash, ExeHash, CodeHash, FoodError, BattleError;
     public Dictionary<string,int[]> Fields;
     public Dictionary<string,int> Counts;
     public FoodProfile Food;
+    public BattleProfile Battle;
 
     internal static int? DisplayChapter(int value) {
         // GameChapter::Parse maps Chapter1 to 0 and Chapter2 to 1.
@@ -58,6 +63,10 @@ internal sealed class RuntimeProfile {
             f.FirstLength < 80 || f.FirstLength > f.SecondOffset || f.SecondOffset >= f.Length ||
             f.GuardStart > f.Offset || f.GuardEnd <= f.Offset + f.Length || f.GuardEnd > result.CodeLength))
             throw new InvalidOperationException("餐券运行结构资料无效，请重新读取游戏。");
+        var b = result.Battle;
+        if (b != null && (b.FlagGlobal < 0 || b.FlagGlobal >= result.GlobalCount || b.FirstIndex < 0 ||
+            b.LastIndex >= 10000 || b.LastIndex-b.FirstIndex != 3 || b.Maximum != 3))
+            throw new InvalidOperationException("战果运行结构资料无效，请重新读取游戏。");
         return result;
     }
     internal int[] Normalize(string name, int[] values) {
@@ -89,7 +98,7 @@ internal static class RuntimeTypes {
             if(j==pattern.Length)yield return i;
         }
     }
-    internal static Dictionary<string,uint> Resolve(Connection c, bool includeFood=false) {
+    internal static Dictionary<string,uint> Resolve(Connection c, bool includeFood=false, bool includeBattle=false) {
         int size = c.Process.MainModule.ModuleMemorySize;
         if(size<4096 || size>256*1024*1024)throw new InvalidOperationException("游戏引擎映像大小需要适配。");
         byte[] image=new byte[size];
@@ -106,12 +115,13 @@ internal static class RuntimeTypes {
             }
             address=hi;
         }
-        return Decode(image,c.ModuleBase,includeFood);
+        return Decode(image,c.ModuleBase,includeFood,includeBattle);
     }
-    internal static Dictionary<string,uint> Decode(byte[] image,uint moduleBase,bool includeFood=false) {
+    internal static Dictionary<string,uint> Decode(byte[] image,uint moduleBase,bool includeFood=false,bool includeBattle=false) {
         ulong start=moduleBase,end=start+(uint)image.Length;
         var result=new Dictionary<string,uint>();
-        foreach(var wanted in Wanted.Where(p=>includeFood || new[]{"Memory","Global","GlobalKind","Struct","StructKind"}.Contains(p.Key))) {
+        foreach(var wanted in Wanted.Where(p=>includeFood || new[]{"Memory","Global","GlobalKind","Struct","StructKind"}.Contains(p.Key) ||
+                (includeBattle && new[]{"Array","ArrayKind"}.Contains(p.Key)))) {
             var matches=new HashSet<uint>();
             foreach(int name in Find(image,Encoding.ASCII.GetBytes(wanted.Value.Item1+'\0'))) {
                 if(name<8)continue;
@@ -128,7 +138,11 @@ internal static class RuntimeTypes {
                     }
                 }
             }
-            if(matches.Count!=1)throw new InvalidOperationException("游戏引擎对象类型需要适配："+wanted.Key);
+            if(matches.Count!=1) {
+                // Optional battle results must not gate food, friendship or points.
+                if(includeBattle && !includeFood && (wanted.Key=="Array" || wanted.Key=="ArrayKind"))continue;
+                throw new InvalidOperationException("游戏引擎对象类型需要适配："+wanted.Key);
+            }
             result[wanted.Key]=matches.First();
         }
         return result;

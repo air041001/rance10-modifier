@@ -247,13 +247,47 @@ def check_new_ui(app, state):
     app.cards.gate.ready()
     app.training.gate.ready()
     app.tabs.select(app.numbers)
-    first = dict(food=2, friend_points=1, total_points=22, chapter=1)
+    first = dict(food=2, friend_points=1, total_points=22, chapter=1,
+                 battle_points=[0, 1, 2, 3], battle_before=[0, 1, 2, 3])
     app.numbers.read(first)
     assert app.numbers.food_title.cget('text') == '餐券'
+    assert app.numbers.friend_title.cget('text') == '战果'
+    assert app.numbers.friend_points.cget('text') == '0'
+    assert not app.numbers.friend_button.instate(['disabled'])
+    assert app.numbers.battle_minus.instate(['disabled'])
+    assert not app.numbers.battle_plus.instate(['disabled'])
+    app.numbers.battle_country.set('自由都市')
+    app.numbers.paint_resources()
+    assert app.numbers.friend_points.cget('text') == '3'
+    assert app.numbers.battle_plus.instate(['disabled'])
+    assert not app.numbers.battle_minus.instate(['disabled'])
+    app.numbers.battle_country.set('赫尔曼')
+    app.numbers.paint_resources()
+    from unittest.mock import patch
+    changed = dict(first, success=True, battle_points=[0, 2, 2, 3],
+                   food_before=[2, 0, 1], bonus_before=[0, 1, 22],
+                   battle_country=2, battle_country_name='赫尔曼')
+    with patch('runtime.run', return_value=changed) as operation:
+        app.numbers.battle_plus.invoke()
+        deadline = time.monotonic() + 10
+        while app.busy:
+            app.update()
+            assert time.monotonic() < deadline, 'Battle result action did not finish'
+            time.sleep(.02)
+        operation.assert_called_once_with('addbattle', 1, country=2)
+    assert app.numbers.friend_points.cget('text') == '2'
+    assert app.numbers.current['friend_points'] == 1 and app.numbers.current['food'] == 2
+    assert '赫尔曼战果：1 → 2' in app.numbers.state.cget('text')
+    app.numbers.read(dict(first, battle_points=None, battle_error='战果需要适配'))
     assert app.numbers.friend_button.instate(['disabled'])
+    assert not app.numbers.fill_button.instate(['disabled'])
+    app.numbers.read(first)
     app.numbers.chapter_mode.set('第二部')
     app.numbers.change_chapter()
     assert app.numbers.food_title.cget('text') == '金块'
+    assert app.numbers.friend_title.cget('text') == '友情'
+    assert app.numbers.friend_points.cget('text') == '1'
+    assert not app.numbers.country_box.winfo_ismapped()
     assert app.numbers.current['chapter'] == 1 and app.numbers.current['food'] == 2
     app.numbers.read(first, automatic=True)
     assert app.numbers.food_title.cget('text') == '金块'
@@ -365,7 +399,7 @@ def check_dpi_layout(app, options):
     app.training.gate.ready()
     app.training.context_loaded(dict(training_cards=[], manual=True, pending=[], slot=1,
                                     star_cap=200, enhancement_cap=10))
-    app.numbers.read(dict(food=2, friend_points=1, total_points=22, chapter=1))
+    app.numbers.read(dict(food=2, friend_points=1, total_points=22, chapter=1, battle_points=[0, 1, 2, 3]))
     scale = options.ui_scale or round(float(app.tk.call('tk', 'scaling')) * 72 / 96 * 100)
     result = dict(version=VERSION, frozen=bool(getattr(sys, 'frozen', False)), scale=scale,
                   initial_size=app.initial_size, layouts=[])
@@ -429,8 +463,11 @@ def check_dpi_layout(app, options):
                 contained(app.theme_button, app)
                 readable(app.page_title)
                 if page == app.numbers:
-                    for button in [page.fill_button, page.friend_button, page.set_button, page.add_button, page.story_link]:
+                    for button in [page.fill_button, page.friend_button, page.battle_minus, page.battle_plus,
+                                   page.set_button, page.add_button, page.story_link]:
                         reachable(button, page.scroll)
+                    readable(page.country_box)
+                    reachable(page.country_box, page.scroll)
                     readable(page.chapter_box)
                     contained(page.chapter_box, page.scroll.canvas)
                 elif page == app.cards:

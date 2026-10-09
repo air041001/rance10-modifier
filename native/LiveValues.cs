@@ -79,7 +79,7 @@ internal sealed class Connection : IDisposable {
                 throw new InvalidOperationException("游戏脚本刚刚变化，请重新读取游戏。");
             Handle = Native.OpenProcess(write ? 0x438u : 0x410u, false, Process.Id);
             if (Handle == IntPtr.Zero) throw new InvalidOperationException("无法访问游戏进程。请让游戏和工具以相同权限运行。");
-            Types = RuntimeTypes.Resolve(this, includeFood);
+            Types = RuntimeTypes.Resolve(this, includeFood, Profile.Battle != null);
             Marker = Types["Memory"];
         } catch { Dispose(); throw; }
     }
@@ -259,7 +259,7 @@ internal static class Engine {
         return verified;
     }
 
-    public static Dictionary<string, object> Run(string action, int amount) {
+    public static Dictionary<string, object> Run(string action, int amount, int country=0) {
         bool writing = action != "probe";
         using (Connection c = new Connection(writing)) {
             LiveObject food = Locate(c, false);
@@ -270,7 +270,19 @@ internal static class Engine {
             if (food == null || bonus == null) throw new InvalidOperationException("游戏状态发生变化，请刷新。");
             int[] oldFood = (int[])food.Values.Clone(), oldBonus = (int[])bonus.Values.Clone();
             int writes = 0;
-            if (writing) {
+            BattlePage battle=null;
+            string battleError=c.Profile.BattleError;
+            try { battle=BattleResults.Read(c,food.Globals); }
+            catch(InvalidOperationException ex) { battleError=ex.Message; }
+            int[] oldBattle=battle==null?null:(int[])battle.Points.Clone();
+            bool writingBattle=action=="fillbattle3" || action=="addbattle";
+            if(writingBattle) {
+                if(battle==null)throw new InvalidOperationException(battleError ?? "暂时无法读取战果，请刷新。");
+                // Validate country before any indexing or process write.
+                BattleResults.TargetValue(action,0,amount,country);
+                battle=BattleResults.Write(c,food,bonus,battle,action,amount,country,out writes);
+            }
+            if (writing && !writingBattle) {
                 bool targetBonus = action == "setpoints" || action == "addpoints" || action == "verify-write";
                 LiveObject target = targetBonus ? bonus : food;
                 int field = targetBonus || action == "fillfriend3" ? 2 : 0;
@@ -320,6 +332,9 @@ internal static class Engine {
                 {"success", true}, {"version", "1.0"}, {"action", action}, {"save_required", false},
                 {"pid", c.Process.Id}, {"chapter", chapter}, {"chapter_raw", rawChapter}, {"session", c.Session},
                 {"food", food.Values[0]}, {"friend_points", food.Values[2]}, {"total_points", bonus.Values[2]},
+                {"battle_points", battle==null?null:battle.Points}, {"battle_before", oldBattle},
+                {"battle_error", battleError}, {"battle_country", writingBattle?(int?)country:null},
+                {"battle_country_name", writingBattle?BattleResults.Countries[country-1]:null},
                 {"food_before", oldFood}, {"food_after", food.Values},
                 {"bonus_before", oldBonus}, {"bonus_after", bonus.Values},
                 {"food_address", "0x" + food.Data.ToString("x")},
@@ -338,10 +353,13 @@ internal static class Program {
         if (args.Contains("--food-watch")) return FoodSelector.Watch(args);
         int exit = 0; Dictionary<string, object> result;
         try {
-            string action = "probe"; int amount = 0;
+            string action = "probe"; int amount = 0, country=0;
             if (args.Contains("--fill3")) action = "fill3";
             if (args.Contains("--fillfriend3")) action = "fillfriend3";
-            foreach (string candidate in new string[] { "setpoints", "addpoints", "verify-write" }) {
+            if (args.Contains("--fillbattle3")) action = "fillbattle3";
+            int countryArgument=Array.IndexOf(args,"--country");
+            if(countryArgument>=0)country=Int32.Parse(args[countryArgument+1]);
+            foreach (string candidate in new string[] { "setpoints", "addpoints", "addbattle", "verify-write" }) {
                 int pos = Array.IndexOf(args, "--" + candidate);
                 if (pos < 0) continue;
                 action = candidate;
@@ -363,7 +381,7 @@ internal static class Program {
                 int profile=Array.IndexOf(args,"--runtime-profile");
                 if(profile<0 || profile+1>=args.Length)throw new InvalidOperationException("缺少本机运行结构资料，请更新完整修改器。");
                 RuntimeSettings.ProfilePath=args[profile+1];
-                result = Engine.Run(action, amount);
+                result = Engine.Run(action, amount, country);
             }
         } catch (Exception ex) {
             exit = 1; result = new Dictionary<string, object> { {"success", false}, {"error", ex.Message} };
