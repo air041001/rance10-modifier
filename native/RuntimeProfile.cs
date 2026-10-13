@@ -20,14 +20,21 @@ internal sealed class BattleProfile {
     public int FlagGlobal, FirstIndex, LastIndex, Maximum;
 }
 
+internal sealed class LootProfile {
+    public uint Offset, GuardStart, GuardEnd;
+    public int Length;
+    public string SpanHash;
+}
+
 internal sealed class RuntimeProfile {
     public int Schema, GlobalCount, PlayerGlobal, BonusGlobal, CharacterGlobal, CardGlobal, CodeLength, CodePage;
     public int GameGlobal = -1;
-    public string AinHash, ExeHash, CodeHash, FoodError, BattleError;
+    public string AinHash, ExeHash, CodeHash, FoodError, BattleError, LootError;
     public Dictionary<string,int[]> Fields;
     public Dictionary<string,int> Counts;
     public FoodProfile Food;
     public BattleProfile Battle;
+    public LootProfile Loot;
 
     internal static int? DisplayChapter(int value) {
         // GameChapter::Parse maps Chapter1 to 0 and Chapter2 to 1.
@@ -67,6 +74,10 @@ internal sealed class RuntimeProfile {
         if (b != null && (b.FlagGlobal < 0 || b.FlagGlobal >= result.GlobalCount || b.FirstIndex < 0 ||
             b.LastIndex >= 10000 || b.LastIndex-b.FirstIndex != 3 || b.Maximum != 3))
             throw new InvalidOperationException("战果运行结构资料无效，请重新读取游戏。");
+        var l=result.Loot;
+        if(l!=null && (l.Length<1000 || l.Length>512000 || l.Offset+l.Length>result.CodeLength ||
+            l.GuardStart!=l.Offset || l.GuardEnd!=l.Offset+l.Length))
+            throw new InvalidOperationException("宝箱运行结构资料无效，请重新读取游戏。");
         return result;
     }
     internal int[] Normalize(string name, int[] values) {

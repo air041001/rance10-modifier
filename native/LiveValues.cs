@@ -98,6 +98,7 @@ internal sealed class Connection : IDisposable {
         byte[] code=Read(start,Profile.CodeLength);
         if(code==null)throw new InvalidOperationException("暂时无法读取运行脚本，请稍后重试。");
         if(Profile.Food!=null)Array.Clear(code,(int)Profile.Food.Offset,Profile.Food.Length);
+        if(Profile.Loot!=null)Array.Clear(code,(int)Profile.Loot.Offset,Profile.Loot.Length);
         if(RuntimeProfile.Hash(code)!=Profile.CodeHash)
             throw new InvalidOperationException("运行中的脚本内容与所选目录不同，请重新启动该目录的游戏。");
     }
@@ -351,6 +352,7 @@ internal static class Program {
     [STAThread]
     static int Main(string[] args) {
         if (args.Contains("--food-watch")) return FoodSelector.Watch(args);
+        if (args.Contains("--loot-watch")) return LootSelector.Watch(args);
         int exit = 0; Dictionary<string, object> result;
         try {
             string action = "probe"; int amount = 0, country=0;

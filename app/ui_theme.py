@@ -149,6 +149,52 @@ def apply_window_theme(master):
         return {}
 
 
+def checkbox_indicator(master, style):
+    """Use a check mark for selection instead of clam's default X."""
+    from PIL import Image, ImageDraw, ImageTk
+    size, gap = px(master, 18), px(master, 6)
+    key = (MODE, size)
+    cache = getattr(master, '_checkbox_icons', {})
+    master._checkbox_icons = cache
+    element = 'AppCheck_%s_%d.indicator' % key
+    if key not in cache:
+        images = {}
+        colours = {
+            'off': (CONTROL, BORDER, None),
+            'on': (BLUE, BLUE, ACCENT_TEXT),
+            'disabled_off': (BG, LINE, None),
+            'disabled_on': (TINT, LINE, MUTED),
+            'mixed': (CONTROL, BLUE, BLUE),
+        }
+        for state, (fill, border, mark) in colours.items():
+            image = Image.new('RGBA', ((size+gap)*4, size*4))
+            draw = ImageDraw.Draw(image)
+            unit = size*4/18
+            draw.rounded_rectangle((unit, unit, 17*unit, 17*unit), radius=3*unit,
+                                   fill=fill, outline=border, width=max(1, round(unit)))
+            if mark:
+                points = [(4, 9), (7.5, 12.5), (14, 5.5)] if state != 'mixed' else [(5, 9), (13, 9)]
+                draw.line([(x*unit, y*unit) for x, y in points], fill=mark,
+                          width=max(1, round(2*unit)), joint='curve')
+            images[state] = ImageTk.PhotoImage(image.resize((size+gap, size), Image.Resampling.LANCZOS), master=master)
+        cache[key] = images  # Tk elements keep names; Python must keep the images alive.
+        style.element_create(element, 'image', images['off'],
+            ('disabled', 'selected', images['disabled_on']),
+            ('disabled', images['disabled_off']), ('selected', images['on']),
+            ('alternate', images['mixed']), sticky='')
+    def replace(layout):
+        result = []
+        for name, options in layout:
+            options = dict(options)
+            if name.endswith('.indicator'):
+                name = element
+            if 'children' in options:
+                options['children'] = replace(options['children'])
+            result.append((name, options))
+        return result
+    style.layout('TCheckbutton', replace(style.layout('TCheckbutton')))
+
+
 def configure_styles(master):
     for name in ['TkDefaultFont', 'TkTextFont', 'TkMenuFont', 'TkHeadingFont']:
         tkfont.nametofont(name, root=master).configure(family=FONT, size=10)
@@ -209,6 +255,7 @@ def configure_styles(master):
           indicatorforeground=[('disabled', MUTED), ('selected', BLUE)])
     s.configure('Surface.TCheckbutton', background=SURFACE)
     s.map('Surface.TCheckbutton', background=[('active', SURFACE)])
+    checkbox_indicator(master, s)
     rowheight = max(px(master, 32), tkfont.nametofont('TkDefaultFont', root=master).metrics('linespace') + 8)
     s.configure('Treeview', font=(FONT, 10), rowheight=rowheight, background=SURFACE,
                 fieldbackground=SURFACE, foreground=TEXT, borderwidth=0)

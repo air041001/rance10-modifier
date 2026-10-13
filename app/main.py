@@ -207,6 +207,9 @@ class App(tk.Tk):
                         summary = '%s战果：%s → %s点' % (r['battle_country_name'], r['battle_before'][index], r['battle_points'][index])
                     elif r.get('action') in ['setpoints', 'addpoints']:
                         summary = '部队总点数：%s → %s' % (r['bonus_before'][2], r['total_points'])
+                    elif r.get('action') == 'loot':
+                        summary = '宝箱规则：' + '、'.join(name for key, name in [('all_cards', '当前部全掉落'), ('unique', '不重复')]
+                                                        if r.get(key))
                     elif r.get('action') == 'cards':
                         summary = '%s号存档加卡：%s → %s张\n    %s' % (r['slot'], r['before'], r['after'], '、'.join(r['cards']))
                     elif r.get('action') in ['star', 'enhancement']:
@@ -305,8 +308,12 @@ class App(tk.Tk):
         if self.busy:
             self.status.configure(text='正在完成操作，请完成后关闭窗口。')
             return
-        if self.training.food_session.process and self.training.food_session.process.poll() is None:
-            self.run(self.training.food_session.close, lambda result: self.destroy(), '正在取消餐券指定并关闭…')
+        sessions = [self.training.food_session, self.numbers.loot_session]
+        if any(session.process and session.process.poll() is None for session in sessions):
+            def restore():
+                for session in sessions:
+                    session.close()
+            self.run(restore, lambda result: self.destroy(), '正在恢复游玩中的规则并关闭…')
         else:
             self.destroy()
 

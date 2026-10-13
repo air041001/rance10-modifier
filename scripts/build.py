@@ -24,7 +24,8 @@ def native():
                     '/r:System.Web.Extensions.dll', '/r:System.Drawing.dll',
                     '/r:System.Windows.Forms.dll', '/r:System.Core.dll',
                     str(ROOT / 'native/LiveValues.cs'), str(ROOT / 'native/FoodSelector.cs'),
-                    str(ROOT / 'native/RuntimeProfile.cs'), str(ROOT / 'native/BattleResults.cs')], check=True)
+                    str(ROOT / 'native/RuntimeProfile.cs'), str(ROOT / 'native/BattleResults.cs'),
+                    str(ROOT / 'native/LootSelector.cs')], check=True)
 
 
 def licenses():

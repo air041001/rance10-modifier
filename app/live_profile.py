@@ -62,7 +62,37 @@ class Reader:
         return dict(name=name, type=typ)
 
 
-def parse_ain(raw):
+def string_table(plain, after):
+    """Locate a bounded STR0 section and validate its following metadata tag."""
+    matches, pos = [], after
+    while True:
+        pos = plain.find(b'STR0', pos)
+        if pos < 0:
+            break
+        try:
+            r = Reader(plain)
+            r.pos = pos+4
+            count = r.count(1000000)
+            strings = [r.text() for _ in range(count)]
+            next_tag = r.take(4)
+            if count and strings[0] == '':
+                if next_tag == b'FNAM':
+                    for _ in range(r.count(100000)):
+                        r.text()
+                    matches.append(strings)
+                elif next_tag == b'DELG':
+                    size, delegates = r.count(64*1024*1024), r.count(10000)
+                    if size and delegates:
+                        matches.append(strings)
+        except (ValueError, struct.error):
+            pass
+        pos += 4
+    if len(matches) != 1:
+        raise ValueError('游戏脚本字符串表需要适配。')
+    return matches[0]
+
+
+def parse_ain(raw, include_strings=False):
     if raw[:8] == b'AI2\0\0\0\0\0':
         if len(raw) < 16:
             raise ValueError('游戏脚本文件头不完整。')
@@ -127,7 +157,9 @@ def parse_ain(raw):
                 r.integer(); r.integer()  # constructor/destructor
                 members = [r.variable() for _ in range(r.count(4096))]
                 result['structures'].append(dict(index=index, name=name, members=members))
-            break  # Later sections are not needed by runtime operations.
+            if include_strings:
+                result['strings'] = string_table(plain, r.pos)
+            break
         else:
             raise ValueError('游戏脚本结构段顺序尚未支持：' + repr(tag))
     if not all(result.get(name) for name in ['code', 'functions', 'globals', 'structures']):
@@ -394,7 +426,7 @@ def prepare(game):
             codepage = {'CP936': 936, 'CP932': 932}[catalog['source']['encoding']]
     except (OSError, ValueError, KeyError):
         pass
-    identity = hashlib.sha256(('%s:%s:%d:5' % (ain_hash, exe_hash, codepage)).encode()).hexdigest()
+    identity = hashlib.sha256(('%s:%s:%d:7' % (ain_hash, exe_hash, codepage)).encode()).hexdigest()
     folder = app_paths.CACHE_DIR / 'live-profiles'
     target = folder / (identity + '.json')
     if target.is_file():
@@ -420,10 +452,20 @@ def prepare(game):
     except (ValueError, KeyError, struct.error) as exc:
         data['Battle'] = None
         data['BattleError'] = str(exc)
+    try:
+        import loot_code
+        strings_ain = parse_ain(raw, include_strings=True)
+        data['Loot'] = loot_code.describe(strings_ain, codepage)
+    except (ValueError, KeyError, struct.error, StopIteration) as exc:
+        data['Loot'] = None
+        data['LootError'] = str(exc)
     proof = bytearray(ain['code'])
     if data['Food']:
         food = data['Food']
         proof[food['Offset']:food['Offset'] + food['Length']] = b'\0' * food['Length']
+    if data['Loot']:
+        loot = data['Loot']
+        proof[loot['Offset']:loot['Offset'] + loot['Length']] = b'\0' * loot['Length']
     data.update(AinHash=ain_hash, ExeHash=exe_hash, CodePage=codepage,
                 CodeHash=hashlib.sha256(proof).hexdigest())
     data['ContentDigest'] = hashlib.sha256(json.dumps(data, sort_keys=True, ensure_ascii=False).encode()).hexdigest()

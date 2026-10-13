@@ -108,6 +108,8 @@ def live_context(snapshot):
 
 
 class Session:
+    watch_flag = '--food-watch'
+    label = '餐券'
     def __init__(self, changed=lambda state: None):
         self.changed, self.process = changed, None
         self.answers, self.events = queue.Queue(), queue.Queue()
@@ -128,7 +130,7 @@ class Session:
         self.game_dir = game_dir
         self.profile_path = profile_path
         self.process = subprocess.Popen([str(app_paths.RESOURCE_DIR / 'LiveValues.exe'),
-            '--food-watch', '--parent-pid', str(os.getpid()), '--game-dir', game_dir, '--runtime-profile', profile_path],
+            self.watch_flag, '--parent-pid', str(os.getpid()), '--game-dir', game_dir, '--runtime-profile', profile_path],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
             encoding='utf-8', creationflags=subprocess.CREATE_NO_WINDOW)
         threading.Thread(target=self.read, args=(self.process, self.answers), daemon=True).start()
@@ -145,9 +147,9 @@ class Session:
                 answers.put(state)
             elif process is self.process:
                 self.events.put((process, state))
-        answers.put(dict(success=False, exited=True, armed=False, message='餐券运行组件已退出，请重试。'))
+        answers.put(dict(success=False, exited=True, armed=False, message=self.label+'运行组件已退出，请重试。'))
         if process is self.process:
-            self.state = dict(success=False, armed=False, message='餐券指定已结束。')
+            self.state = dict(success=False, armed=False, message=self.label+'规则已结束。')
             self.events.put((process, self.state))
 
     def request(self, command):
@@ -165,7 +167,7 @@ class Session:
                         break
             except queue.Empty:
                 self.process.stdin.close()  # The helper restores in its finally block.
-                raise ValueError('餐券运行组件响应超时，正在取消指定，请稍后重试。')
+                raise ValueError(self.label+'运行组件响应超时，正在恢复原规则，请稍后重试。')
             if state.get('revision', 0) >= self.state.get('revision', 0):
                 self.state = state
             if not state.get('success'):

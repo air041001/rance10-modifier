@@ -4,6 +4,7 @@ import tkinter as tk
 from tkinter import ttk
 import runtime
 import settings
+import loot
 from game_icons import Icons
 from ui_theme import BG, GREEN, RED, MUTED, FONT, surface, ScrollBody, px
 
@@ -16,6 +17,7 @@ class Numbers(ttk.Frame):
         self.owner, self.current, self.chapter = owner, None, None
         self.icons, self.story_target, self.story_photo = Icons(owner), None, None
         self.probes, self.probing, self.generation = queue.Queue(), False, 0
+        self.loot_session = loot.Session(self.loot_changed)
         self.scroll = ScrollBody(self, background=BG)
         self.scroll.pack(fill='both', expand=True)
         content = self.scroll.body
@@ -38,7 +40,7 @@ class Numbers(ttk.Frame):
         self.food_title, self.food_icon = self.heading(food, '餐券 / 金块')
         self.food, self.food_unit = self.metric(food, '/ 3 张')
         self.food_slots = self.slots(food)
-        self.food_note = ttk.Label(food, text='第一部餐券，第二部金块。', style='SurfaceHint.TLabel', wraplength=px(self, 230))
+        self.food_note = ttk.Label(food, text='第一部餐券，第二部金块。', style='SurfaceHint.TLabel', width=1, wraplength=px(self, 230))
         self.food_note.pack(fill='x', pady=(8, 12))
         self.fill_button = ttk.Button(food, text='补满餐券 / 金块', style='Primary.TButton', command=lambda: self.act('fill3'))
         self.fill_button.pack(side='bottom', fill='x')
@@ -52,7 +54,7 @@ class Numbers(ttk.Frame):
         self.country_box.pack(side='left', fill='x', expand=True)
         self.country_box.bind('<<ComboboxSelected>>', lambda e: self.paint_resources())
         self.friend_slots = self.slots(friendship)
-        self.friend_note = ttk.Label(friendship, text='第二部在游戏中选择友情人物。', style='SurfaceHint.TLabel', wraplength=px(self, 230))
+        self.friend_note = ttk.Label(friendship, text='第二部在游戏中选择友情人物。', style='SurfaceHint.TLabel', width=1, wraplength=px(self, 230))
         self.friend_note.pack(fill='x', pady=(8, 12))
         self.friend_button = ttk.Button(friendship, text='补满 3 点友情', style='Primary.TButton', command=self.fill_middle)
         self.friend_button.pack(side='bottom', fill='x')
@@ -64,9 +66,11 @@ class Numbers(ttk.Frame):
         self.battle_plus.grid(row=0, column=1, sticky='ew', padx=(4, 0))
         _, self.points_icon = self.heading(points, '部队加成点数')
         self.points, _ = self.metric(points, '总点数')
-        point_note = ttk.Label(points, text='包含已用点数，已有加成会保留。', style='SurfaceHint.TLabel', wraplength=px(self, 230))
+        point_note = ttk.Label(points, text='包含已用点数，已有加成会保留。', style='SurfaceHint.TLabel', width=1, wraplength=px(self, 230))
         point_note.pack(fill='x', pady=(2, 12))
         for panel, note in zip(self.panels, [self.food_note, self.friend_note, point_note]):
+            # Wrapping must not change the requested column width. Otherwise
+            # odd pixel widths alternate between the two uniform grid columns.
             panel.bind('<Configure>', lambda e, label=note: label.configure(wraplength=max(1, e.width - 38)))
         self.add_button = ttk.Button(points, text='增加 5 点', style='Primary.TButton', command=lambda: self.act('addpoints', 5))
         self.add_button.pack(side='bottom', fill='x')
@@ -78,6 +82,25 @@ class Numbers(ttk.Frame):
         self.spin.pack(side='left')
         self.set_button = ttk.Button(setting, text='设置总额', command=self.set_points)
         self.set_button.pack(side='right', padx=(6, 0))
+        box = surface(content, 16)
+        box.pack(fill='x', pady=(16, 0))
+        ttk.Label(box, text='宝箱掉落', style='CardTitle.TLabel').pack(anchor='w')
+        self.loot_all, self.loot_unique = tk.BooleanVar(value=False), tk.BooleanVar(value=False)
+        self.loot_all_button = ttk.Checkbutton(box, text='全掉落 · 解锁当前部卡池', variable=self.loot_all,
+            style='Surface.TCheckbutton', command=self.apply_loot)
+        self.loot_all_button.pack(anchor='w', pady=(6, 0))
+        self.loot_unique_button = ttk.Checkbutton(box, text='不重复 · 排除已持有版本', variable=self.loot_unique,
+            style='Surface.TCheckbutton', command=self.apply_loot)
+        self.loot_unique_button.pack(anchor='w')
+        self.loot_note = ttk.Label(box, text='两部专属版本分开，共用卡按游戏保留；固定奖励优先。没有新卡可选时使用原卡池。',
+                                   style='SurfaceHint.TLabel', wraplength=650)
+        self.loot_note.pack(fill='x', pady=(4, 8))
+        self.loot_status = ttk.Label(box, text='开启后，下次生成随机宝箱候选时生效。', style='Surface.TLabel', wraplength=650)
+        self.loot_status.pack(fill='x')
+        self.loot_cancel = ttk.Button(box, text='恢复原规则', command=self.cancel_loot)
+        self.loot_cancel.pack(anchor='w', pady=(8, 0))
+        box.bind('<Configure>', lambda e: [label.configure(wraplength=max(1, e.width-32))
+                                         for label in (self.loot_note, self.loot_status)])
         story = surface(content, 16)
         story.pack(fill='x', pady=(16, 0))
         self.story_preview = ttk.Label(story, style='Surface.TLabel', anchor='center', width=5)
@@ -111,6 +134,35 @@ class Numbers(ttk.Frame):
         self.paint_resources()
         self.update_story({})
         self.update_actions()
+        self.after(150, self.poll_loot)
+
+    def poll_loot(self):
+        self.loot_session.poll()
+        self.after(150, self.poll_loot)
+
+    def loot_changed(self, state):
+        if state.get('revision', 0) < self.loot_session.state.get('revision', 0):
+            state = self.loot_session.state
+        self.loot_all.set(bool(state.get('armed') and state.get('all_cards')))
+        self.loot_unique.set(bool(state.get('armed') and state.get('unique')))
+        self.loot_status.configure(text=state.get('message', '宝箱规则已恢复。'),
+                                   foreground=GREEN if state.get('success', True) else RED)
+        self.update_actions()
+
+    def apply_loot(self):
+        all_cards, unique = self.loot_all.get(), self.loot_unique.get()
+        def failed(message):
+            self.loot_changed(self.loot_session.state)
+            self.loot_status.configure(text=message, foreground=RED)
+        def done(data):
+            self.loot_changed(data)
+            self.owner.refresh_history()
+        self.owner.run(lambda: self.loot_session.configure(all_cards, unique), done,
+                       '正在切换宝箱掉落规则…', failed)
+
+    def cancel_loot(self):
+        self.loot_all.set(False); self.loot_unique.set(False)
+        self.apply_loot()
 
     @staticmethod
     def heading(panel, text):
@@ -272,6 +324,9 @@ class Numbers(ttk.Frame):
         self.spin.configure(state='disabled' if busy else 'normal')
         self.story_link.configure(state='disabled' if busy or self.chapter == 2 else 'normal')
         self.story_cancel.configure(state='disabled' if busy else 'normal')
+        for button in (self.loot_all_button, self.loot_unique_button):
+            button.configure(state='normal' if self.current and not busy else 'disabled')
+        self.loot_cancel.configure(state='normal' if self.loot_session.state.get('armed') and not busy else 'disabled')
 
     def refresh(self):
         self.generation += 1

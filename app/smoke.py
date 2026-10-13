@@ -278,6 +278,20 @@ def check_new_ui(app, state):
     assert app.numbers.friend_points.cget('text') == '2'
     assert app.numbers.current['friend_points'] == 1 and app.numbers.current['food'] == 2
     assert '赫尔曼战果：1 → 2' in app.numbers.state.cget('text')
+    loot_state = dict(success=True, armed=True, all_cards=True, unique=False, message='宝箱规则已开启')
+    with patch.object(app.numbers.loot_session, 'configure', return_value=loot_state) as loot_action:
+        app.numbers.loot_session.state = loot_state
+        app.numbers.loot_all_button.invoke()
+        deadline = time.monotonic() + 10
+        while app.busy:
+            app.update()
+            assert time.monotonic() < deadline, 'Loot action did not finish'
+            time.sleep(.02)
+        loot_action.assert_called_once_with(True, False)
+    assert app.numbers.loot_all.get() and not app.numbers.loot_unique.get()
+    app.numbers.loot_session.state = dict(success=True, armed=False, message='规则已恢复')
+    app.numbers.loot_changed(app.numbers.loot_session.state)
+    assert not app.numbers.loot_all.get() and app.numbers.loot_cancel.instate(['disabled'])
     app.numbers.read(dict(first, battle_points=None, battle_error='战果需要适配'))
     assert app.numbers.friend_button.instate(['disabled'])
     assert not app.numbers.fill_button.instate(['disabled'])
@@ -464,6 +478,7 @@ def check_dpi_layout(app, options):
                 readable(app.page_title)
                 if page == app.numbers:
                     for button in [page.fill_button, page.friend_button, page.battle_minus, page.battle_plus,
+                                   page.loot_all_button, page.loot_unique_button, page.loot_cancel,
                                    page.set_button, page.add_button, page.story_link]:
                         reachable(button, page.scroll)
                     readable(page.country_box)
