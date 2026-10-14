@@ -137,7 +137,7 @@ class Gallery(ttk.Frame):
                 colour, ink = ('#f9e9bf', GOLD) if r['rarity'] == '特级' else ('#e9ddff', '#6942a6')
                 self.rounded(x + self.p(105), y + self.p(12), x + self.p(158), y + self.p(35), radius=self.p(4), fill=colour, outline='', tags=tags)
                 self.canvas.create_text(x + self.p(132), y + self.p(23), text=r['rarity'], fill=ink, font=(FONT, 8, 'bold'), tags=tags)
-            if r['owned'] or not r['available']:
+            if not r.get('selectable', not r['owned'] and r['available']):
                 label = '已持有' if r['owned'] else '不可加'
                 self.rounded(x + self.p(12), y + self.p(12), x + self.p(62), y + self.p(35), radius=self.p(4), fill='#39485c', outline='', tags=tags)
                 self.canvas.create_text(x + self.p(37), y + self.p(23), text=label, fill='white', font=(FONT, 8), tags=tags)
@@ -176,7 +176,7 @@ class Gallery(ttk.Frame):
         gutter = max(0, (self.canvas.winfo_width() - self.cols * self.W) // 2)
         localx = x - gutter - (index % self.cols) * self.W
         localy = y - (index // self.cols) * self.H
-        if self.p(12) <= localx <= self.p(36) and self.p(12) <= localy <= self.p(36) and not r['owned'] and r['available']:
+        if self.p(12) <= localx <= self.p(36) and self.p(12) <= localy <= self.p(36) and r.get('selectable', not r['owned'] and r['available']):
             self.on_toggle(r)
         self.schedule()
 

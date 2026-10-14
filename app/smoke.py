@@ -212,6 +212,40 @@ def check(app, options):
                 app.cards.appearance.set('全部范围')
                 app.cards.filter()
                 state['cards']['scopes'] = scopes
+                # Exercise deletion through the same visible controls; mock
+                # only the final file operation so no user's save is written.
+                import card_removal
+                app.cards.operation.set('删除持有卡牌')
+                app.cards.change_operation()
+                app.update()
+                assert all(row['owned'] and row['selectable'] for row in app.cards.visible)
+                actor = next((row for row in app.cards.visible if row['kind'] == '人物'), None)
+                if actor:
+                    app.cards.detail(actor)
+                    app.cards.suggest_button.invoke()
+                    expected = set(card_removal.same_character(context, actor['id']))
+                    assert app.cards.selected == expected
+                    assert str(context['count'] - len(expected)) in app.cards.count_text.get()
+                    if context['manual'] and not context['pending']:
+                        with patch('cards_ui.messagebox.askyesno', return_value=False), \
+                             patch.object(card_removal, 'apply') as remove:
+                            app.cards.apply_button.invoke()
+                            remove.assert_not_called()
+                        with patch('cards_ui.messagebox.askyesno', return_value=True), \
+                             patch.object(card_removal, 'apply', return_value={}) as remove, \
+                             patch.object(app.cards, 'applied') as completed:
+                            app.cards.apply_button.invoke()
+                            deadline = time.monotonic() + 10
+                            while app.busy:
+                                app.update()
+                                assert time.monotonic() < deadline, 'Mock deletion did not finish'
+                                time.sleep(.02)
+                            assert set(remove.call_args.args[1]) == expected
+                            completed.assert_called_once_with({})
+                    state['cards']['removal_mode_and_character_variants'] = True
+                app.cards.operation.set('添加卡牌')
+                app.cards.change_operation()
+                assert not app.cards.selected
                 if app_paths.CHARACTER_FILE.exists():
                     import training
                     cultivation = training.inspect(context['path'])

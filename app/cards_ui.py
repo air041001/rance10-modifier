@@ -4,6 +4,7 @@ from pathlib import Path
 import datetime
 import unicodedata
 import engine
+import card_removal
 import app_paths
 from gallery import Gallery
 from ui_theme import BG, SURFACE, TEXT, MUTED, LINE, BLUE, TINT, GOLD, FONT, surface, ScrollBody, LibraryGate, px, flow_buttons
@@ -27,15 +28,24 @@ class Cards(ttk.Frame):
         self.savebox.bind('<<ComboboxSelected>>', lambda e: self.load_selected())
         self.refresh_button = ttk.Button(row, text='刷新存档', command=self.refresh)
         self.refresh_button.pack(side='left', padx=(10, 0))
-        self.hint = ttk.Label(content, text='先保存到手动存档位，添加卡牌后重新读档生效。',
+        self.hint = ttk.Label(content, text='先保存到手动存档位，修改卡牌后重新读档生效。',
                               style='Hint.TLabel', wraplength=990)
         self.hint.pack(fill='x', pady=(9, 12))
+
+        operation_row = ttk.Frame(content)
+        operation_row.pack(fill='x', pady=(0, 10))
+        ttk.Label(operation_row, text='操作', style='Hint.TLabel').pack(side='left', padx=(0, 10))
+        self.operation = tk.StringVar(value='添加卡牌')
+        self.operationbox = ttk.Combobox(operation_row, values=['添加卡牌', '删除持有卡牌'],
+            textvariable=self.operation, state='readonly', width=16, font=(FONT, 10))
+        self.operationbox.pack(side='left')
+        self.operationbox.bind('<<ComboboxSelected>>', lambda e: self.change_operation())
 
         row = ttk.Frame(content)
         row.pack(fill='x', pady=(0, 12))
         self.count_text = tk.StringVar(value='选择存档，查看持有卡牌')
         ttk.Label(row, textvariable=self.count_text, style='Summary.TLabel').pack(side='left')
-        goalbox = ttk.Frame(row)
+        goalbox = self.goalbox = ttk.Frame(row)
         goalbox.pack(side='right')
         ttk.Label(goalbox, text='目标数量', style='Hint.TLabel').pack(side='left', padx=(0, 8))
         self.goal_value = tk.IntVar(value=200)
@@ -86,8 +96,12 @@ class Cards(ttk.Frame):
         self.only_missing = tk.BooleanVar(value=False)
         self.only_available = tk.BooleanVar(value=False)
         self.only_selected = tk.BooleanVar(value=False)
+        self.add_filters = []
         for text, var in [('仅未持有', self.only_missing), ('仅可添加', self.only_available), ('已选清单', self.only_selected)]:
-            check_controls.append(ttk.Checkbutton(checks, text=text, variable=var, command=self.filter))
+            control = ttk.Checkbutton(checks, text=text, variable=var, command=self.filter)
+            check_controls.append(control)
+            if var is not self.only_selected:
+                self.add_filters.append(control)
         self.mode = tk.StringVar(value='卡图')
         modebox = ttk.Combobox(checks, values=['卡图', '列表'], textvariable=self.mode, state='readonly', width=5, font=(FONT, 10))
         flow_buttons(checks, check_controls + [modebox])
@@ -281,19 +295,38 @@ class Cards(ttk.Frame):
         except (ValueError, tk.TclError):
             return 200
 
+    def removing(self):
+        return self.operation.get() == '删除持有卡牌'
+
+    def change_operation(self):
+        self.selected.clear()
+        self.only_missing.set(False)
+        self.only_available.set(False)
+        self.only_selected.set(False)
+        if self.removing():
+            self.goalbox.pack_forget()
+        else:
+            self.goalbox.pack(side='right')
+        for control in self.add_filters:
+            control.configure(state='disabled' if self.removing() else 'normal')
+        self.filter()
+        self.update_actions()
+
     def filter(self):
         if not self.context:
             return
         q = unicodedata.normalize('NFKC', self.query.get().strip()).casefold()
         result = []
         for r in self.context['cards']:
+            if self.removing() and not r['owned']:
+                continue
             if self.only_selected.get():
                 if r['id'] not in self.selected:
                     continue
             else:
-                if self.only_missing.get() and r['owned']:
+                if not self.removing() and self.only_missing.get() and r['owned']:
                     continue
-                if self.only_available.get() and not r['available']:
+                if not self.removing() and self.only_available.get() and not r['available']:
                     continue
                 if self.rarity.get() != '全部稀有度' and r['rarity'] != self.rarity.get():
                     continue
@@ -316,18 +349,22 @@ class Cards(ttk.Frame):
                     continue
             result.append(r)
         self.visible = result
+        for r in result:
+            r['selectable'] = r['owned'] if self.removing() else r['available'] and not r['owned']
         self.tree.delete(*self.tree.get_children())
         for i, r in enumerate(result):
             checked = r['id'] in self.selected
             status = '已持有' if r['owned'] else ('可添加' if r['available'] else '暂不可加')
-            self.tree.insert('', 'end', iid=str(i), values=('☑' if checked else ('—' if r['owned'] or not r['available'] else '☐'),
+            self.tree.insert('', 'end', iid=str(i), values=('☑' if checked else ('☐' if r['selectable'] else '—'),
                             r['id'], r['kind'], r['rarity'], r['faction'], r['star'], status),
-                             tags=('owned',) if r['owned'] else (('unavailable',) if not r['available'] else (('checked',) if checked else ())))
+                             tags=('checked',) if checked else (() if r['selectable'] else (('owned',) if r['owned'] else ('unavailable',))))
         self.gallery.set_cards(result, self.selected, self.active)
         self.result_text.configure(text='显示 %d 张  ·  特级 %d 张  ·  超稀有 %d 张  ·  当前可添加 %d 张' %
                                   (len(result), sum(r['rarity'] == '特级' for r in result),
                                    sum(r['rarity'] == '超稀有' for r in result),
                                    sum(r['available'] and not r['owned'] for r in result)))
+        if self.removing():
+            self.result_text.configure(text='删除整个版本及其强化；删掉人物最后一个版本时，一并清除当前存档的培养、餐券及个人事件记录。')
         if result:
             self.detail(next((r for r in result if r['id'] == self.active), result[0]))
         else:
@@ -356,6 +393,12 @@ class Cards(ttk.Frame):
                '添加时按游戏规则建立角色，初始培养★%s。' % r['star'] if r['new_character'] else '沿用角色当前培养星级。')
         text = '基础HP %s   基础AT %s\n\n%s\n\n%s' % (r['hp'], r['atk'], r['details'],
                note if r['available'] else r['unavailable_reason'])
+        if self.removing():
+            variants = card_removal.same_character(self.context, r['id'])
+            text = '当前持有数量 %d（强化 +%d）\n\n%s' % (r['copies'], max(0, r['copies'] - 1), r['details'])
+            if variants:
+                text += '\n\n当前持有此人物 %d 个版本。只删一张后，其他版本仍可能满足人物持有条件。' % len(variants)
+            text += '\n\n删除人物最后一个版本时，同时清除培养与餐券进度。已完成任务、战况及跨存档共享图鉴保留。'
         if r['description']:
             text = r['description'] + '\n\n' + text
         if r['appearance'] == 2:
@@ -375,9 +418,14 @@ class Cards(ttk.Frame):
             self.toggle(r)
 
     def toggle(self, r):
-        if self.owner.busy or r['owned']:
+        if self.owner.busy:
             return
-        if not r['available']:
+        if self.removing():
+            if not r['owned']:
+                return
+        elif r['owned']:
+            return
+        elif not r['available']:
             self.owner.status.configure(text=r['unavailable_reason'])
             return
         if r['id'] in self.selected:
@@ -422,6 +470,12 @@ class Cards(ttk.Frame):
     def suggest(self):
         if not self.context or self.owner.busy:
             return
+        if self.removing():
+            ids = card_removal.same_character(self.context, self.active)
+            self.selected.update(ids)
+            self.only_selected.set(True)
+            self.filter()
+            return
         ids = engine.suggest(self.context, self.goal(), self.selected)
         self.selected.update(ids)
         self.only_selected.set(True)
@@ -445,38 +499,65 @@ class Cards(ttk.Frame):
         c, busy = self.context, self.owner.busy
         self.refresh_button.configure(state='disabled' if busy else 'normal')
         self.savebox.configure(state='disabled' if busy else 'readonly')
-        self.suggest_button.configure(state='normal' if c and not busy else 'disabled')
+        self.operationbox.configure(state='disabled' if busy else 'readonly')
+        can_suggest = bool(c and not busy and (not self.removing() or card_removal.same_character(c, self.active)))
+        self.suggest_button.configure(state='normal' if can_suggest else 'disabled',
+            text='选中此人物全部版本' if self.removing() else '选卡补到目标')
         self.clear_button.configure(state='disabled' if busy else 'normal')
         if hasattr(self, 'choose_button'):
             card = next((r for r in self.visible if r['id'] == self.active), None)
-            can_choose = bool(card and card['available'] and not card['owned'] and not busy)
+            can_choose = bool(card and (card['owned'] if self.removing() else card['available'] and not card['owned']) and not busy)
             label = ('移出清单' if card and card['id'] in self.selected else '选入清单')
-            if card and (card['owned'] or not card['available']):
+            if not self.removing() and card and (card['owned'] or not card['available']):
                 label = '已持有' if card['owned'] else '暂不可添加'
             self.choose_button.configure(state='normal' if can_choose else 'disabled', text=label)
         ready = bool(c and c['manual'] and not c['pending'] and self.selected and not busy)
-        self.apply_button.configure(state='normal' if ready else 'disabled', text='备份并添加 %d 张' % len(self.selected))
+        self.apply_button.configure(state='normal' if ready else 'disabled',
+            text=('备份并删除 %d 张' if self.removing() else '备份并添加 %d 张') % len(self.selected))
         if c:
-            after = c['count'] + len(self.selected)
+            after = c['count'] + (-len(self.selected) if self.removing() else len(self.selected))
             self.count_text.set('存档 %d 张  ·  已选 %d 张  →  %d 张' % (c['count'], len(self.selected), after))
+            if c['manual']:
+                self.hint.configure(text='目标：%d号（%s）。%s后请重新读取这个存档；游玩中未保存的进度不在这里。' %
+                    (c['slot'], c['time'], '删除' if self.removing() else '添加'))
 
     def apply(self):
         if not self.context or self.owner.busy or not self.selected:
             return
         c = self.context
         ids = [r['id'] for r in c['cards'] if r['id'] in self.selected]
-        self.owner.run(lambda: engine.apply(c['path'], ids, c['sha']), self.applied, '正在备份、添加并校验存档…')
+        if self.removing():
+            preview = '\n'.join(ids[:12]) + ('\n……共 %d 张' % len(ids) if len(ids) > 12 else '')
+            remaining = sorted({r['character'] for r in c['cards'] if r['id'] in self.selected and r['kind'] != '物品'} &
+                               {r['character'] for r in c['cards'] if r['owned'] and r['id'] not in self.selected})
+            cleared = sorted({r['character'] for r in c['cards'] if r['id'] in self.selected} -
+                             {r['character'] for r in c['cards'] if r['owned'] and r['id'] not in self.selected})
+            note = '\n\n清除培养、餐券和个人事件记录：' + '、'.join(cleared) if cleared else ''
+            if remaining:
+                note += '\n\n以下人物仍有其他版本，人物数据继续保留：' + '、'.join(remaining)
+            if not messagebox.askyesno('确认删除卡牌', '从%d号存档删除以下卡牌：\n\n%s\n\n'
+                    '该版本的重复强化一并删除，出战位置会解除。%s\n\n'
+                    '原档会自动备份。确认删除？' % (c['slot'], preview, note), parent=self):
+                return
+            self.owner.run(lambda: card_removal.apply(c['path'], ids, c['sha']), self.applied, '正在备份、删除并校验存档…')
+        else:
+            self.owner.run(lambda: engine.apply(c['path'], ids, c['sha']), self.applied, '正在备份、添加并校验存档…')
 
     def applied(self, report):
         self.owner.training.invalidate()
         self.owner.backup = report['backup']
-        self.owner.log(dict(action='cards', time=datetime.datetime.now().isoformat(timespec='seconds'),
+        removed = report.get('action') == 'remove_cards'
+        self.owner.log(dict(action='remove_cards' if removed else 'cards', time=datetime.datetime.now().isoformat(timespec='seconds'),
                             slot=self.context['slot'], before=report['before_count'], after=report['after_count'],
-                            backup=report['backup'], cards=[x['card'] for x in report['cards']]))
+                            backup=report['backup'], cards=[x['card'] for x in report['cards']],
+                            cleared_characters=report.get('removed_characters', [])))
         self.owner.refresh_history()
         self.selected.clear()
         slot = self.context['slot']
-        messagebox.showinfo('卡牌已添加', '%d → %d张\n\n请退出再进入游戏读档菜单，重新读取%d号。\n'
+        extra = '\n\n读档后进入一次编队刷新属性；已经生成的据点任务列表需等游戏下次生成时重新判断。' if removed else ''
+        if removed and report.get('removed_characters'):
+            extra += '\n\n已清除人物数据：' + '、'.join(report['removed_characters'])
+        messagebox.showinfo('卡牌已删除' if removed else '卡牌已添加', '%d → %d张\n\n请退出再进入游戏读档菜单，重新读取%d号。\n'
                             '直接在旧游戏画面中保存，会把旧数据写回来。\n\n原档已备份，可在“记录与备份”查看。' %
-                            (report['before_count'], report['after_count'], slot), parent=self)
+                            (report['before_count'], report['after_count'], slot) + extra, parent=self)
         self.load_selected()

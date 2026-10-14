@@ -90,7 +90,7 @@ class App(tk.Tk):
         self.records = ttk.Frame(self.tabs, padding=(24, 20))
         self.setup = Setup(self.tabs, self)
         self.tabs.add(self.numbers, text='游玩中修改', subtitle='餐券 · 友情 · 点数')
-        self.tabs.add(self.cards, text='卡牌扩充', subtitle='选卡 · 图鉴 · 技能')
+        self.tabs.add(self.cards, text='卡牌扩充', subtitle='添加 · 删除 · 图鉴')
         self.tabs.add(self.training, text='人物培养', subtitle='★等级 · 强化 · 餐券故事')
         self.tabs.add(self.records, text='记录与备份', subtitle='修改记录与原始存档')
         self.tabs.add(self.setup, text='设置与图鉴', subtitle='目录 · 连接 · 图鉴准备')
@@ -212,6 +212,8 @@ class App(tk.Tk):
                                                         if r.get(key))
                     elif r.get('action') == 'cards':
                         summary = '%s号存档加卡：%s → %s张\n    %s' % (r['slot'], r['before'], r['after'], '、'.join(r['cards']))
+                    elif r.get('action') == 'remove_cards':
+                        summary = '%s号存档删卡：%s → %s张\n    %s' % (r['slot'], r['before'], r['after'], '、'.join(r['cards']))
                     elif r.get('action') in ['star', 'enhancement']:
                         summary = '%s号存档 · %s · %s：%s → %s' % (r['slot'], r['target'],
                                    '人物★' if r['action'] == 'star' else '同卡强化', r['before'], r['after'])
@@ -239,9 +241,9 @@ class App(tk.Tk):
 
     def tab_changed(self, event=None):
         titles = {str(self.numbers): ('游玩中修改', '当前游戏的资源与部队加成'),
-                  str(self.cards): ('卡牌扩充', '查看卡面与技能，按存档选择要添加的卡牌'),
+                  str(self.cards): ('卡牌扩充', '查看卡面与技能，添加或删除存档中的卡牌'),
                   str(self.training): ('人物培养与餐券故事', '存档培养 · 当前游戏人物 · 指定战后餐券候选'),
-                  str(self.records): ('记录与备份', '查看修改记录，找到添加卡牌前的原始存档'),
+                  str(self.records): ('记录与备份', '查看修改记录，找到修改前的原始存档'),
                   str(self.setup): ('设置与图鉴', '选择你的游戏目录，准备本机卡牌图鉴')}
         title, hint = titles[self.tabs.select()]
         self.page_title.configure(text=title)

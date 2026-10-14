@@ -263,12 +263,18 @@ def collection(s):
             ids.append(ident.encode(s['encoding']))
         require(ids == sorted(ids), '原存档卡牌列表排序异常。')
     characters = {}
-    for i, r in enumerate(s['records']):
-        if r['sid'] >= 0 and s['defs'][r['sid']]['name'] == 'Character':
-            v = fields(s, i)
-            name = text(s, v['m_id'])
-            require(name not in characters, '角色记录重复。')
-            characters[name] = (i, v)
+    require(s['globals'].get('g_character', (None,))[0] == 13, '存档缺少人物集合。')
+    poolref = s['globals']['g_character'][1]
+    pool = fields(s, poolref)
+    require(s['defs'][s['records'][poolref]['sid']]['name'] == 'CharacterCollection', '人物集合引用类型不匹配。')
+    # Only objects in the native owning collection are active characters.
+    # Unlinked records can remain in the serialized object table after edits.
+    for i in flat(s, pool['m_character'], 13):
+        v = fields(s, i)
+        require(s['defs'][s['records'][i]['sid']]['name'] == 'Character', '人物记录引用类型不匹配。')
+        name = text(s, v['m_id'])
+        require(name not in characters, '角色记录重复。')
+        characters[name] = (i, v)
     pending = set()
     for name in ['m_stock', 'm_extraCard', 'm_card']:
         for ref in flat(s, root[name], 13):

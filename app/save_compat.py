@@ -22,12 +22,28 @@ SCHEMAS = {
     'OrganizationCardCollection': [(79, 'm_card'), (79, 'm_characterId'), (10, 'm_uniqueId'),
         (13, 'm_status'), (10, 'm_hp'), (10, 'm_atk'), (47, 'm_isChanged'), (79, ''), (63, '')],
     'CharacterCollection': [(79, 'm_character')],
+    'EventReadInfo': [(79, 'm_eventName')],
+    'GameContext': [(79, 'm_shownCardIds')],
     'ClearPointBonusCollection': [(79, 'm_bonus')],
     'ClearPointBonus': [(47, '<IsUse>'), (92, '<Type>'), (10, '<Value>')],
     'PlayerCommonParam': [(10, n) for n in ['m_foodTicket', 'm_honor', 'm_friendPoint',
         'm_lastHumanDead', 'm_lastHumanAlivePer']] + [(47, 'm_itemStarUp'), (12, 'm_bestFriendId')] +
         [(10, n) for n in ['<TotalExp>', '<PartyRank>', '<TreasureNotGetCount>', '<ItemStar>']] +
         [(47, '<IsUsedHannyZippo>')],
+    'LeaderCard': [(12, 'm_cardId'), (13, 'm_status'), (13, 'm_state'), (13, 'm_skillCounter'),
+        (10, 'm_hp'), (79, ''), (10, 'Index'), (12, '<CharacterId>'),
+        (10, '<OrganizationId>'), (47, '<IsUseSkillConverter>')],
+    'LeaderState': [(92, 'm_state'), (63, '')] + [(47, n) for n in
+        ['IsDamageSacrifice', 'IsBadConditionSacrifice', 'IsCritical', 'IsMultiAttack', 'm_isReaction', 'm_isReactionEnabled']],
+    'CommonStatus': [(10, n) for n in ['<Atk>', 'm_AtkPerPhysical', 'm_AtkPerMagical',
+        'm_DefPerPhysical', 'm_DefPerMagical', 'm_PerAvoidance', 'm_DecPerBadCondition',
+        'm_perAutoBattleAtk', 'm_PerCritical', 'm_PerMultiAttack', 'm_PerExpUp', 'm_PerHpUp',
+        'm_PerAutoHeal', 'm_PerFindTreasure', 'm_PerInjection', 'm_AddPerHit', 'StatusMaxPer']],
+    'SkillCounterValue': [(47, 'IsUsed'), (47, 'IsLastUsed'), (10, 'UsedCount')],
+    'SkillCounterValueCollection': [(12, 'm_cardId'), (79, 'm_counter'), (10, '<UnusedRound>')],
+    'Party': [(13, 'm_status'), (13, 'm_leaders'), (13, 'm_guest'), (10, 'm_availableCount'),
+        (10, 'm_hp'), (11, 'm_hpRatio'), (79, 'm_stockCardId'), (79, 'm_preBattleCardIds'),
+        (47, '<IsFixStatus>'), (63, '')],
 }
 GROUPS = {
     'cards': ['PlayerCard@2', 'PlayerCard@0#1', 'PlayerCardSkill@2', 'PlayerCardSkill@0#1',
@@ -80,6 +96,7 @@ def validate_save(s, exact=(), scope='read'):
         'PlayerCardCollection': ['m_org', 'm_stock', 'm_extraCard', 'm_card'],
         'OrganizationCardCollection': ['m_card'],
         'PlayerCard': ['<Id>', 'm_count'], 'Character': ['m_id'],
+        'CharacterCollection': ['m_character'],
     }
     if scope == 'cards':
         wanted.update(Character=['m_id', 'm_star'], PlayerCommonParam=['<ItemStar>', 'm_itemStarUp'],
@@ -89,6 +106,13 @@ def validate_save(s, exact=(), scope='read'):
             PlayerCardCollection=['m_org', 'm_stock', 'm_extraCard', 'm_card', '<LeaderRatio>'])
     elif scope == 'character_write':
         wanted['CharacterCollection'] = ['m_character']
+    elif scope == 'card_remove':
+        wanted.update(OrganizationCardCollection=['m_card', 'm_characterId', 'm_isChanged'],
+                      PlayerCard=['<Id>', 'm_count', 'Index'], GameContext=['m_shownCardIds'])
+    elif scope == 'character_remove':
+        wanted.update(Character=['m_id', 'm_star', '<Exp>', '<NextExp>', '<FoodTicketEvent>', '<IsFinishAttack>'],
+                      FoodTicketEvent=['m_eventStage'], EventReadInfo=['m_eventName'],
+                      PlayerCommonParam=['m_bestFriendId'], GameContext=['m_shownCardIds'])
     elif scope == 'training':
         wanted.update(Character=['m_id', 'm_star', '<Exp>', '<NextExp>', '<FoodTicketEvent>'],
             FoodTicketEvent=['m_eventStage'], PlayerCard=['<Id>', 'm_count', 'm_dummyStar', 'm_tempStar'])
