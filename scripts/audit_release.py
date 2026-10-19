@@ -29,10 +29,15 @@ def main():
     entries = zipfile.ZipFile(packages[0]).namelist()
     for name in entries:
         path = Path(name)
+        if len(path.parts)>1 and path.parts[1] in {'docs', 'app', 'native', 'scripts', 'tests'}:
+            raise ValueError('Development files in application package: ' + name)
         if path.suffix.lower() in forbidden or path.name in prohibited:
             raise ValueError('Game or personal data in release: ' + name)
         if path.suffix.lower() in ['.png', '.jpg', '.webp', '.ajp', '.dcf']:
             raise ValueError('Unexpected image resource: ' + name)
+    readme = zipfile.ZipFile(packages[0]).read('Rance10Modifier/README.md').decode('utf-8')
+    if '\n## 开发\n' in readme:
+        raise ValueError('Development instructions in application README.')
     print('Source:', len(files), 'files. Release:', len(entries), 'files.')
     print('No game data, card images, personal saves, settings, or logs.')
 

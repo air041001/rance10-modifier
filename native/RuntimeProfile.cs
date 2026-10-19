@@ -29,12 +29,13 @@ internal sealed class LootProfile {
 internal sealed class RuntimeProfile {
     public int Schema, GlobalCount, PlayerGlobal, BonusGlobal, CharacterGlobal, CardGlobal, CodeLength, CodePage;
     public int GameGlobal = -1;
-    public string AinHash, ExeHash, CodeHash, FoodError, BattleError, LootError;
+    public string AinHash, ExeHash, CodeHash, FoodError, BattleError, LootError, DropError;
     public Dictionary<string,int[]> Fields;
     public Dictionary<string,int> Counts;
     public FoodProfile Food;
     public BattleProfile Battle;
     public LootProfile Loot;
+    public LootProfile Drop;
 
     internal static int? DisplayChapter(int value) {
         // GameChapter::Parse maps Chapter1 to 0 and Chapter2 to 1.
@@ -78,6 +79,11 @@ internal sealed class RuntimeProfile {
         if(l!=null && (l.Length<1000 || l.Length>512000 || l.Offset+l.Length>result.CodeLength ||
             l.GuardStart!=l.Offset || l.GuardEnd!=l.Offset+l.Length))
             throw new InvalidOperationException("宝箱运行结构资料无效，请重新读取游戏。");
+        var d=result.Drop;
+        if(d!=null && (d.Length!=48 || d.Offset+d.Length>result.CodeLength ||
+            d.GuardStart>d.Offset || d.GuardEnd<d.Offset+d.Length || d.GuardEnd>result.CodeLength ||
+            (l!=null && d.Offset<l.Offset+l.Length && l.Offset<d.Offset+d.Length)))
+            throw new InvalidOperationException("宝箱必掉落运行资料无效，请重新读取游戏。");
         return result;
     }
     internal int[] Normalize(string name, int[] values) {

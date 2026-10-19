@@ -7,13 +7,17 @@ using System.Text;
 using System.Threading;
 using System.Web.Script.Serialization;
 
-// Own only the random-box routine. Fixed IDs and the card-get scene are intact.
+// Own the random pool and/or eligible-victory roll. Restore both atomically.
 internal static class LootSelector {
     static Connection connection;
     static GlobalsPage globals;
     static uint codeBase;
-    static byte[] original, patch;
-    static bool allCards, unique, restoring;
+    sealed class Entry {
+        internal LootProfile Layout;
+        internal byte[] Original, Patch;
+    }
+    static readonly List<Entry> entries=new List<Entry>();
+    static bool allCards, unique, guaranteed, restoring;
     static volatile bool inputClosed;
     static long revision;
 
@@ -32,10 +36,13 @@ internal static class LootSelector {
     }
     static void Forget() {
         if(connection!=null)connection.Dispose();
-        connection=null; globals=null; original=patch=null; restoring=allCards=unique=false;
+        connection=null; globals=null; entries.Clear(); restoring=allCards=unique=guaranteed=false;
     }
-    static void Write(GlobalsPage page,byte[] expected,byte[] replacement) {
-        var p=connection.Profile.Loot;
+    static bool Guarded(uint value) {
+        return entries.Any(e=>(value>=e.Layout.GuardStart && value<e.Layout.GuardEnd) ||
+            (value>=codeBase+e.Layout.GuardStart && value<codeBase+e.Layout.GuardEnd));
+    }
+    static void Write(GlobalsPage page,byte[][] expected,byte[][] replacement) {
         using(var paused=new PausedGame(connection.Process)) {
             if(!Engine.SameGlobals(page,Engine.CheckGlobals(connection,page.Owner)) || CodeBase(connection,page)!=codeBase)
                 throw new InvalidOperationException("游戏正在换档，请稍后重试。");
@@ -45,29 +52,39 @@ internal static class LootSelector {
             uint current=BitConverter.ToUInt32(ip,0);
             int top=BitConverter.ToInt32(stack,4);
             if(top< -1 || top>255)throw new InvalidOperationException("游戏调用栈需要适配。");
-            if(current>=codeBase+p.GuardStart && current<codeBase+p.GuardEnd)
-                throw new InvalidOperationException("正在生成宝箱候选，返回稳定画面后再切换规则。");
+            if(Guarded(current))
+                throw new InvalidOperationException("正在结算战斗或生成宝箱，返回稳定画面后再切换规则。");
             byte[] returns=connection.Read(page.Context+196,(top+1)*4);
             if(returns==null)throw new InvalidOperationException("暂时无法核对游戏调用栈。");
             for(int i=0;i<=top;i++) {
                 uint caller=BitConverter.ToUInt32(returns,i*4);
                 // Check both script offsets and pointers into the VM code.
-                if((caller>=p.GuardStart && caller<p.GuardEnd) ||
-                   (caller>=codeBase+p.GuardStart && caller<codeBase+p.GuardEnd))
-                    throw new InvalidOperationException("正在生成宝箱候选，返回稳定画面后再切换规则。");
+                if(Guarded(caller))
+                    throw new InvalidOperationException("正在结算战斗或生成宝箱，返回稳定画面后再切换规则。");
             }
-            uint address=codeBase+p.Offset;
-            byte[] before=connection.Read(address,p.Length);
-            if(before==null || !before.SequenceEqual(expected))
-                throw new InvalidOperationException("宝箱规则已被其他修改改变，没有覆盖。");
-            UIntPtr written;
-            bool success=Native.WriteProcessMemory(connection.Handle,new IntPtr((long)address),replacement,(UIntPtr)(uint)p.Length,out written);
-            byte[] after=connection.Read(address,p.Length);
-            if(!success || written.ToUInt64()!=(ulong)p.Length || after==null || !after.SequenceEqual(replacement)) {
-                Native.WriteProcessMemory(connection.Handle,new IntPtr((long)address),before,(UIntPtr)(uint)p.Length,out written);
-                after=connection.Read(address,p.Length);
-                if(after==null || !after.SequenceEqual(before))throw new InvalidOperationException("宝箱规则恢复失败，请重新启动游戏。");
-                throw new InvalidOperationException("本次未开启，原宝箱规则已恢复。");
+            // Verify every span before writing any span, while the game is paused.
+            for(int i=0;i<entries.Count;i++) {
+                var p=entries[i].Layout;
+                byte[] before=connection.Read(codeBase+p.Offset,p.Length);
+                if(before==null || !before.SequenceEqual(expected[i]))
+                    throw new InvalidOperationException("宝箱规则已被其他修改改变，没有覆盖。");
+            }
+            for(int i=0;i<entries.Count;i++) {
+                var p=entries[i].Layout;uint address=codeBase+p.Offset;UIntPtr written;
+                bool success=Native.WriteProcessMemory(connection.Handle,new IntPtr((long)address),replacement[i],(UIntPtr)(uint)p.Length,out written);
+                byte[] after=connection.Read(address,p.Length);
+                if(success && written.ToUInt64()==(ulong)p.Length && after!=null && after.SequenceEqual(replacement[i]))continue;
+                // A partial write to either rule restores both pre-write spans.
+                for(int j=0;j<entries.Count;j++) {
+                    var r=entries[j].Layout;
+                    Native.WriteProcessMemory(connection.Handle,new IntPtr((long)(codeBase+r.Offset)),expected[j],(UIntPtr)(uint)r.Length,out written);
+                }
+                bool restored=entries.Select((e,j)=> {
+                    byte[] now=connection.Read(codeBase+e.Layout.Offset,e.Layout.Length);
+                    return now!=null && now.SequenceEqual(expected[j]);
+                }).All(v=>v);
+                if(!restored)throw new InvalidOperationException("宝箱规则恢复失败，请重新启动游戏。");
+                throw new InvalidOperationException("本次切换未完成，已恢复切换前的宝箱规则。");
             }
         }
     }
@@ -80,41 +97,72 @@ internal static class LootSelector {
             page=Engine.Locate(connection,false).Globals;
             if(CodeBase(connection,page)!=codeBase){Forget();return;}
         }
-        var p=connection.Profile.Loot;
-        byte[] now=connection.Read(codeBase+p.Offset,p.Length);
-        if(now!=null && now.SequenceEqual(original)){Forget();return;}
-        if(now==null || !now.Select((value,i)=>value==patch[i] || value==original[i]).All(v=>v))
+        byte[][] current=entries.Select(e=>connection.Read(codeBase+e.Layout.Offset,e.Layout.Length)).ToArray();
+        if(entries.Select((e,i)=>current[i]!=null && current[i].SequenceEqual(e.Original)).All(v=>v)){Forget();return;}
+        if(entries.Select((e,i)=>current[i]==null || !current[i].Select((v,j)=>v==e.Patch[j] || v==e.Original[j]).All(v=>v)).Any(v=>v))
             throw new InvalidOperationException("宝箱代码被其他程序改变，没有覆盖。");
-        Write(page,now,original); Forget();
+        Write(page,current,entries.Select(e=>e.Original).ToArray()); Forget();
+    }
+    static bool Flag(Dictionary<string,object> command,string name) {
+        object value;return command.TryGetValue(name,out value) && Convert.ToBoolean(value);
+    }
+    static LootProfile Layout(RuntimeProfile profile,string name) {
+        var p=name=="patch"?profile.Loot:profile.Drop;
+        if(p==null)throw new InvalidOperationException((name=="patch"?profile.LootError:profile.DropError)??"这项宝箱规则需要适配。");
+        return p;
     }
     static void Arm(Dictionary<string,object> command) {
         Restore();
         connection=new Connection(true,true);
         try {
-            var p=connection.Profile.Loot;
-            if(p==null)throw new InvalidOperationException(connection.Profile.LootError??"随机宝箱规则需要适配。");
             globals=Engine.Locate(connection,false).Globals;
             if(connection.Process.Id!=Convert.ToInt32(command["pid"]) || connection.Session!=Convert.ToInt64(command["session"]) ||
                 globals.Owner!=Convert.ToUInt32(command["global_owner"]))
                 throw new InvalidOperationException("游戏进度刚刚变化，请重新开启宝箱规则。");
             codeBase=CodeBase(connection,globals);
-            original=connection.Read(codeBase+p.Offset,p.Length);
-            if(original==null || RuntimeProfile.Hash(original)!=p.SpanHash)
-                throw new InvalidOperationException("随机宝箱已被另一修改改变，未覆盖。");
-            patch=Convert.FromBase64String((string)command["patch"]);
-            allCards=Convert.ToBoolean(command["all_cards"]); unique=Convert.ToBoolean(command["unique"]);
-            if(patch.Length!=p.Length || (!allCards && !unique))throw new InvalidOperationException("宝箱规则参数无效。");
-            Write(globals,original,patch);
+            allCards=Flag(command,"all_cards");unique=Flag(command,"unique");guaranteed=Flag(command,"guaranteed");
+            if(!allCards && !unique && !guaranteed)throw new InvalidOperationException("宝箱规则参数无效。");
+            foreach(string name in new[]{"patch","drop_patch"}) {
+                if(name=="patch"?!(allCards || unique):!guaranteed)continue;
+                var p=Layout(connection.Profile,name);
+                byte[] original=connection.Read(codeBase+p.Offset,p.Length);
+                if(original==null || RuntimeProfile.Hash(original)!=p.SpanHash)
+                    throw new InvalidOperationException("宝箱规则已被另一修改改变，未覆盖。");
+                byte[] patch=Convert.FromBase64String((string)command[name]);
+                if(patch.Length!=p.Length)throw new InvalidOperationException("宝箱规则参数无效。");
+                entries.Add(new Entry { Layout=p,Original=original,Patch=patch });
+            }
+            Write(globals,entries.Select(e=>e.Original).ToArray(),entries.Select(e=>e.Patch).ToArray());
         } catch {
-            byte[] now=original==null?null:connection.Read(codeBase+connection.Profile.Loot.Offset,original.Length);
-            if(original==null || patch==null || (now!=null && now.SequenceEqual(original)))Forget();
-            else restoring=true;
+            bool original=entries.All(e=> {
+                byte[] now=connection.Read(codeBase+e.Layout.Offset,e.Layout.Length);
+                return now!=null && now.SequenceEqual(e.Original);
+            });
+            if(original)Forget();else restoring=true;
             throw;
         }
     }
     static Dictionary<string,object> State(bool success,bool reply,string message) {
         return new Dictionary<string,object> { {"success",success},{"reply",reply},{"armed",connection!=null},
-            {"all_cards",allCards},{"unique",unique},{"restoring",restoring},{"message",message} };
+            {"all_cards",allCards},{"unique",unique},{"guaranteed",guaranteed},{"restoring",restoring},{"message",message} };
+    }
+    static Dictionary<string,object> Probe(Dictionary<string,object> command) {
+        using(var c=new Connection(false,true)) {
+            var page=Engine.Locate(c,false).Globals;uint address=CodeBase(c,page);
+            var snapshot=new Dictionary<string,object> { {"pid",c.Process.Id},{"session",c.Session},
+                {"global_owner",page.Owner},{"profile",new JavaScriptSerializer().DeserializeObject(File.ReadAllText(RuntimeSettings.ProfilePath,Encoding.UTF8))} };
+            foreach(string name in new[]{"patch","drop_patch"}) {
+                if(name=="patch"?!(Flag(command,"all_cards") || Flag(command,"unique")):!Flag(command,"guaranteed"))continue;
+                var p=Layout(c.Profile,name);byte[] body=c.Read(address+p.Offset,p.Length);
+                var own=connection!=null && c.Process.Id==connection.Process.Id && address==codeBase?
+                    entries.FirstOrDefault(e=>e.Layout.Offset==p.Offset && e.Layout.Length==p.Length):null;
+                if(body==null || (RuntimeProfile.Hash(body)!=p.SpanHash && (own==null || !body.SequenceEqual(own.Patch))))
+                    throw new InvalidOperationException("宝箱规则与当前游戏不同，或已被其他修改改变。");
+                snapshot[name=="patch"?"source_code":"drop_source_code"]=Convert.ToBase64String(
+                    RuntimeProfile.Hash(body)==p.SpanHash?body:own.Original);
+            }
+            var result=State(true,true,"已读取当前宝箱规则。");result["snapshot"]=snapshot;return result;
+        }
     }
     static void Emit(Dictionary<string,object> state) {
         state["revision"]=++revision;
@@ -146,23 +194,10 @@ internal static class LootSelector {
                     Dictionary<string,object> result;
                     try {
                         string action=(string)command["action"];
-                        if(action=="arm") {Arm(command);result=State(true,true,"宝箱规则已开启，下次生成随机候选时生效。");}
+                        if(action=="arm") {Arm(command);result=State(true,true,guaranteed?"宝箱规则已开启：后续可掉落的胜利必出宝箱；卡池规则在生成候选时生效。":"宝箱规则已开启，下次生成随机候选时生效。");}
                         else if(action=="cancel") {Restore();result=State(true,true,"已恢复游戏原来的宝箱规则。");}
-                        else if(action=="probe") {
-                            using(var c=new Connection(false,true)) {
-                                var p=c.Profile.Loot;
-                                if(p==null)throw new InvalidOperationException(c.Profile.LootError??"随机宝箱规则需要适配。");
-                                var page=Engine.Locate(c,false).Globals;
-                                byte[] body=c.Read(CodeBase(c,page)+p.Offset,p.Length);
-                                if(body==null || (RuntimeProfile.Hash(body)!=p.SpanHash &&
-                                    (connection==null || c.Process.Id!=connection.Process.Id || !body.SequenceEqual(patch))))
-                                    throw new InvalidOperationException("宝箱规则与当前游戏不同，或已被其他修改改变。");
-                                result=State(true,true,"已读取当前随机宝箱规则。");
-                                result["snapshot"]=new Dictionary<string,object> { {"pid",c.Process.Id},{"session",c.Session},
-                                    {"global_owner",page.Owner},{"source_code",Convert.ToBase64String(RuntimeProfile.Hash(body)==p.SpanHash?body:original)},
-                                    {"profile",new JavaScriptSerializer().DeserializeObject(File.ReadAllText(RuntimeSettings.ProfilePath,Encoding.UTF8))} };
-                            }
-                        } else throw new InvalidOperationException("未知宝箱操作。");
+                        else if(action=="probe") result=Probe(command);
+                        else throw new InvalidOperationException("未知宝箱操作。");
                     } catch(Exception ex){result=State(false,true,ex.Message);}
                     object request; if(command.TryGetValue("request_id",out request))result["request_id"]=request;
                     Emit(result);

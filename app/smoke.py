@@ -321,11 +321,22 @@ def check_new_ui(app, state):
             app.update()
             assert time.monotonic() < deadline, 'Loot action did not finish'
             time.sleep(.02)
-        loot_action.assert_called_once_with(True, False)
+        loot_action.assert_called_once_with(True, False, False)
     assert app.numbers.loot_all.get() and not app.numbers.loot_unique.get()
+    guaranteed_state = dict(loot_state, guaranteed=True, all_cards=False)
+    with patch.object(app.numbers.loot_session, 'configure', return_value=guaranteed_state) as loot_action:
+        app.numbers.loot_session.state = guaranteed_state
+        app.numbers.loot_guaranteed_button.invoke()
+        deadline = time.monotonic() + 10
+        while app.busy:
+            app.update()
+            assert time.monotonic() < deadline, 'Guaranteed treasure action did not finish'
+            time.sleep(.02)
+        loot_action.assert_called_once_with(True, False, True)
+    assert app.numbers.loot_guaranteed.get() and not app.numbers.loot_all.get()
     app.numbers.loot_session.state = dict(success=True, armed=False, message='规则已恢复')
     app.numbers.loot_changed(app.numbers.loot_session.state)
-    assert not app.numbers.loot_all.get() and app.numbers.loot_cancel.instate(['disabled'])
+    assert not app.numbers.loot_all.get() and not app.numbers.loot_guaranteed.get() and app.numbers.loot_cancel.instate(['disabled'])
     app.numbers.read(dict(first, battle_points=None, battle_error='战果需要适配'))
     assert app.numbers.friend_button.instate(['disabled'])
     assert not app.numbers.fill_button.instate(['disabled'])
@@ -364,6 +375,11 @@ def check_new_ui(app, state):
     app.numbers.update_story(dict(armed=True, character='测试人物', completed=1, maximum=3))
     original = ui_theme.MODE
     layouts = []
+    def settle_layout():
+        # Native resize notifications can follow Tk's idle geometry work.
+        for _ in range(3):
+            app.update()
+            time.sleep(.02)
     for mode in [original, 'light' if original == 'dark' else 'dark']:
         if ui_theme.MODE != mode:
             app.toggle_theme(persist=False)
@@ -395,19 +411,20 @@ def check_new_ui(app, state):
         assert app.numbers.story_progress.cget('text') == '已看 1 / 3'
         for geometry in ['1280x820', '900x700']:
             app.geometry(geometry)
-            app.update()
+            settle_layout()
             for page in [app.numbers, app.cards, app.training, app.setup]:
                 app.tabs.select(page)
-                app.update()
+                settle_layout()
                 if page == app.numbers:
                     assert page.chapter_box.winfo_rootx() + page.chapter_box.winfo_width() <= page.winfo_rootx() + page.winfo_width()
-                    buttons = [page.fill_button, page.friend_button, page.add_button, page.set_button, page.story_link]
+                    buttons = [page.fill_button, page.friend_button, page.add_button, page.set_button, page.story_link,
+                               page.loot_guaranteed_button, page.loot_all_button, page.loot_unique_button]
                     scroll = page.scroll
                     for button in buttons:
                         scroll.see(button)
                         app.update()
                         top = button.winfo_rooty() - scroll.canvas.winfo_rooty()
-                        assert 0 <= top and top + button.winfo_height() <= scroll.canvas.winfo_height(), button.cget('text')
+                        assert 0 <= top and top + button.winfo_height() <= scroll.canvas.winfo_height(), (button.cget('text'),mode,geometry,top,button.winfo_height(),scroll.canvas.winfo_height(),scroll.canvas.cget('scrollregion'),scroll.canvas.yview())
                         assert button.winfo_width() >= button.winfo_reqwidth(), button.cget('text')
                     layouts.append(dict(theme=mode, size=geometry, resource_columns=page._columns))
                 if page == app.cards:

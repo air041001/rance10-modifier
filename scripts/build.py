@@ -97,11 +97,10 @@ def main():
     subprocess.run([sys.executable, '-m', 'PyInstaller', '--noconfirm', '--clean', '--distpath', str(dist_dir),
                     str(ROOT / 'modifier.spec')], cwd=ROOT, check=True)
     package = dist_dir / 'Rance10Modifier'
-    for name in ['README.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'CHANGELOG.md']:
+    for name in ['LICENSE', 'THIRD_PARTY_NOTICES.md', 'CHANGELOG.md']:
         shutil.copy2(ROOT / name, package / name)
-    (package / 'docs').mkdir(exist_ok=True)
-    for document in (ROOT / 'docs').glob('*.md'):
-        shutil.copy2(document, package / 'docs' / document.name)
+    readme = (ROOT / 'README.md').read_text(encoding='utf-8')
+    (package / 'README.md').write_text(readme.split('\n## 开发\n', 1)[0].rstrip() + '\n', encoding='utf-8')
     release = ROOT / 'release'
     release.mkdir(exist_ok=True)
     archive = release / ('Rance10Modifier-v%s-windows-x64.zip' % VERSION)

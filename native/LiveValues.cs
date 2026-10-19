@@ -99,6 +99,7 @@ internal sealed class Connection : IDisposable {
         if(code==null)throw new InvalidOperationException("暂时无法读取运行脚本，请稍后重试。");
         if(Profile.Food!=null)Array.Clear(code,(int)Profile.Food.Offset,Profile.Food.Length);
         if(Profile.Loot!=null)Array.Clear(code,(int)Profile.Loot.Offset,Profile.Loot.Length);
+        if(Profile.Drop!=null)Array.Clear(code,(int)Profile.Drop.Offset,Profile.Drop.Length);
         if(RuntimeProfile.Hash(code)!=Profile.CodeHash)
             throw new InvalidOperationException("运行中的脚本内容与所选目录不同，请重新启动该目录的游戏。");
     }

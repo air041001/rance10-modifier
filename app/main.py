@@ -208,7 +208,7 @@ class App(tk.Tk):
                     elif r.get('action') in ['setpoints', 'addpoints']:
                         summary = '部队总点数：%s → %s' % (r['bonus_before'][2], r['total_points'])
                     elif r.get('action') == 'loot':
-                        summary = '宝箱规则：' + '、'.join(name for key, name in [('all_cards', '当前部全掉落'), ('unique', '不重复')]
+                        summary = '宝箱规则：' + '、'.join(name for key, name in [('guaranteed', '胜利必掉落'), ('all_cards', '当前部全掉落'), ('unique', '不重复')]
                                                         if r.get(key))
                     elif r.get('action') == 'cards':
                         summary = '%s号存档加卡：%s → %s张\n    %s' % (r['slot'], r['before'], r['after'], '、'.join(r['cards']))

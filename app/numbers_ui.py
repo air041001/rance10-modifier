@@ -86,16 +86,20 @@ class Numbers(ttk.Frame):
         box.pack(fill='x', pady=(16, 0))
         ttk.Label(box, text='宝箱掉落', style='CardTitle.TLabel').pack(anchor='w')
         self.loot_all, self.loot_unique = tk.BooleanVar(value=False), tk.BooleanVar(value=False)
+        self.loot_guaranteed = tk.BooleanVar(value=False)
+        self.loot_guaranteed_button = ttk.Checkbutton(box, text='必掉落 · 胜利后必出宝箱', variable=self.loot_guaranteed,
+            style='Surface.TCheckbutton', command=self.apply_loot)
+        self.loot_guaranteed_button.pack(anchor='w', pady=(6, 0))
         self.loot_all_button = ttk.Checkbutton(box, text='全掉落 · 解锁当前部卡池', variable=self.loot_all,
             style='Surface.TCheckbutton', command=self.apply_loot)
-        self.loot_all_button.pack(anchor='w', pady=(6, 0))
+        self.loot_all_button.pack(anchor='w')
         self.loot_unique_button = ttk.Checkbutton(box, text='不重复 · 排除已持有版本', variable=self.loot_unique,
             style='Surface.TCheckbutton', command=self.apply_loot)
         self.loot_unique_button.pack(anchor='w')
-        self.loot_note = ttk.Label(box, text='两部专属版本分开，共用卡按游戏保留；固定奖励优先。没有新卡可选时使用原卡池。',
+        self.loot_note = ttk.Label(box, text='必掉落保留剧情禁掉落条件；两部专属卡分开，固定奖励优先。没有新卡可选时使用原卡池。',
                                    style='SurfaceHint.TLabel', wraplength=650)
         self.loot_note.pack(fill='x', pady=(4, 8))
-        self.loot_status = ttk.Label(box, text='开启后，下次生成随机宝箱候选时生效。', style='Surface.TLabel', wraplength=650)
+        self.loot_status = ttk.Label(box, text='必掉落在战斗结算前开启；全掉落和不重复在生成候选前开启。', style='Surface.TLabel', wraplength=650)
         self.loot_status.pack(fill='x')
         self.loot_cancel = ttk.Button(box, text='恢复原规则', command=self.cancel_loot)
         self.loot_cancel.pack(anchor='w', pady=(8, 0))
@@ -145,23 +149,25 @@ class Numbers(ttk.Frame):
             state = self.loot_session.state
         self.loot_all.set(bool(state.get('armed') and state.get('all_cards')))
         self.loot_unique.set(bool(state.get('armed') and state.get('unique')))
+        self.loot_guaranteed.set(bool(state.get('armed') and state.get('guaranteed')))
         self.loot_status.configure(text=state.get('message', '宝箱规则已恢复。'),
                                    foreground=GREEN if state.get('success', True) else RED)
         self.update_actions()
 
     def apply_loot(self):
-        all_cards, unique = self.loot_all.get(), self.loot_unique.get()
+        all_cards, unique, guaranteed = self.loot_all.get(), self.loot_unique.get(), self.loot_guaranteed.get()
         def failed(message):
             self.loot_changed(self.loot_session.state)
             self.loot_status.configure(text=message, foreground=RED)
         def done(data):
             self.loot_changed(data)
             self.owner.refresh_history()
-        self.owner.run(lambda: self.loot_session.configure(all_cards, unique), done,
+        self.owner.run(lambda: self.loot_session.configure(all_cards, unique, guaranteed), done,
                        '正在切换宝箱掉落规则…', failed)
 
     def cancel_loot(self):
         self.loot_all.set(False); self.loot_unique.set(False)
+        self.loot_guaranteed.set(False)
         self.apply_loot()
 
     @staticmethod
@@ -324,7 +330,7 @@ class Numbers(ttk.Frame):
         self.spin.configure(state='disabled' if busy else 'normal')
         self.story_link.configure(state='disabled' if busy or self.chapter == 2 else 'normal')
         self.story_cancel.configure(state='disabled' if busy else 'normal')
-        for button in (self.loot_all_button, self.loot_unique_button):
+        for button in (self.loot_guaranteed_button, self.loot_all_button, self.loot_unique_button):
             button.configure(state='normal' if self.current and not busy else 'disabled')
         self.loot_cancel.configure(state='normal' if self.loot_session.state.get('armed') and not busy else 'disabled')
 

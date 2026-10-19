@@ -426,7 +426,7 @@ def prepare(game):
             codepage = {'CP936': 936, 'CP932': 932}[catalog['source']['encoding']]
     except (OSError, ValueError, KeyError):
         pass
-    identity = hashlib.sha256(('%s:%s:%d:7' % (ain_hash, exe_hash, codepage)).encode()).hexdigest()
+    identity = hashlib.sha256(('%s:%s:%d:9' % (ain_hash, exe_hash, codepage)).encode()).hexdigest()
     folder = app_paths.CACHE_DIR / 'live-profiles'
     target = folder / (identity + '.json')
     if target.is_file():
@@ -459,6 +459,12 @@ def prepare(game):
     except (ValueError, KeyError, struct.error, StopIteration) as exc:
         data['Loot'] = None
         data['LootError'] = str(exc)
+    try:
+        import treasure_code
+        data['Drop'] = treasure_code.describe(ain)
+    except (ValueError, KeyError, struct.error, StopIteration) as exc:
+        data['Drop'] = None
+        data['DropError'] = str(exc)
     proof = bytearray(ain['code'])
     if data['Food']:
         food = data['Food']
@@ -466,6 +472,9 @@ def prepare(game):
     if data['Loot']:
         loot = data['Loot']
         proof[loot['Offset']:loot['Offset'] + loot['Length']] = b'\0' * loot['Length']
+    if data['Drop']:
+        drop = data['Drop']
+        proof[drop['Offset']:drop['Offset'] + drop['Length']] = b'\0' * drop['Length']
     data.update(AinHash=ain_hash, ExeHash=exe_hash, CodePage=codepage,
                 CodeHash=hashlib.sha256(proof).hexdigest())
     data['ContentDigest'] = hashlib.sha256(json.dumps(data, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
