@@ -121,10 +121,13 @@ def check(app, options):
                 app.update()
                 assert app.tabs.select() == str(page), 'Missing data changed the selected page'
                 assert page.gate.winfo_ismapped() and not page.content.winfo_ismapped()
+    with patch('webbrowser.open', return_value=True) as browser:
+        app.instructions_button.invoke()
+        browser.assert_called_once_with(app.instructions_url)
     state = dict(version=VERSION, frozen=bool(getattr(sys, 'frozen', False)),
                  resources=str(app_paths.RESOURCE_DIR), data=str(app_paths.DATA_DIR),
                  helper=(app_paths.RESOURCE_DIR / 'LiveValues.exe').is_file(),
-                 instructions=(app_paths.RESOURCE_DIR / '使用说明.txt').is_file(),
+                 instructions=app.instructions_url.startswith('https://github.com/'),
                  navigation=geometry,
                  missing_library_stays_on_page=True, setup_controls_visible=setup_controls,
                  empty_character_roster_ok=True,
@@ -334,8 +337,28 @@ def check_new_ui(app, state):
             time.sleep(.02)
         loot_action.assert_called_once_with(True, False, True)
     assert app.numbers.loot_guaranteed.get() and not app.numbers.loot_all.get()
-    app.numbers.loot_session.state = dict(success=True, armed=False, message='规则已恢复')
-    app.numbers.loot_changed(app.numbers.loot_session.state)
+    waiting_state = dict(guaranteed_state, enabled=True, armed=False, waiting=True, revision=100,
+                         message='正在读档，宝箱选项已保留，等待自动应用。')
+    app.numbers.loot_session.state = waiting_state
+    app.numbers.loot_changed(waiting_state)
+    assert app.numbers.loot_guaranteed.get() and not app.numbers.loot_all.get()
+    assert not app.numbers.loot_cancel.instate(['disabled'])
+    previous_current = app.numbers.current
+    app.numbers.current = None
+    app.numbers.update_actions()
+    assert not app.numbers.loot_cancel.instate(['disabled'])
+    cancelled_state = dict(success=True, enabled=False, armed=False, revision=101, message='规则已恢复')
+    with patch.object(app.numbers.loot_session, 'configure', return_value=cancelled_state) as loot_action:
+        app.numbers.loot_session.state = cancelled_state
+        app.numbers.loot_cancel.invoke()
+        deadline = time.monotonic() + 10
+        while app.busy:
+            app.update()
+            assert time.monotonic() < deadline, 'Cancel pending loot action did not finish'
+            time.sleep(.02)
+        loot_action.assert_called_once_with(False, False, False)
+    app.numbers.loot_changed(waiting_state)  # Ignore stale events after cancellation.
+    app.numbers.current = previous_current
     assert not app.numbers.loot_all.get() and not app.numbers.loot_guaranteed.get() and app.numbers.loot_cancel.instate(['disabled'])
     app.numbers.read(dict(first, battle_points=None, battle_error='战果需要适配'))
     assert app.numbers.friend_button.instate(['disabled'])

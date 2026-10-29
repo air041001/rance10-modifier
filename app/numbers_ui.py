@@ -99,7 +99,7 @@ class Numbers(ttk.Frame):
         self.loot_note = ttk.Label(box, text='必掉落保留剧情禁掉落条件；两部专属卡分开，固定奖励优先。没有新卡可选时使用原卡池。',
                                    style='SurfaceHint.TLabel', wraplength=650)
         self.loot_note.pack(fill='x', pady=(4, 8))
-        self.loot_status = ttk.Label(box, text='必掉落在战斗结算前开启；全掉落和不重复在生成候选前开启。', style='Surface.TLabel', wraplength=650)
+        self.loot_status = ttk.Label(box, text='读档、SL或重新战斗后自动保持选项；手动取消或关闭修改器时结束。', style='Surface.TLabel', wraplength=650)
         self.loot_status.pack(fill='x')
         self.loot_cancel = ttk.Button(box, text='恢复原规则', command=self.cancel_loot)
         self.loot_cancel.pack(anchor='w', pady=(8, 0))
@@ -147,11 +147,12 @@ class Numbers(ttk.Frame):
     def loot_changed(self, state):
         if state.get('revision', 0) < self.loot_session.state.get('revision', 0):
             state = self.loot_session.state
-        self.loot_all.set(bool(state.get('armed') and state.get('all_cards')))
-        self.loot_unique.set(bool(state.get('armed') and state.get('unique')))
-        self.loot_guaranteed.set(bool(state.get('armed') and state.get('guaranteed')))
+        selected = state.get('enabled') or state.get('armed')
+        self.loot_all.set(bool(selected and state.get('all_cards')))
+        self.loot_unique.set(bool(selected and state.get('unique')))
+        self.loot_guaranteed.set(bool(selected and state.get('guaranteed')))
         self.loot_status.configure(text=state.get('message', '宝箱规则已恢复。'),
-                                   foreground=GREEN if state.get('success', True) else RED)
+                                   foreground=RED if not state.get('success', True) else MUTED if state.get('waiting') else GREEN)
         self.update_actions()
 
     def apply_loot(self):
@@ -330,9 +331,10 @@ class Numbers(ttk.Frame):
         self.spin.configure(state='disabled' if busy else 'normal')
         self.story_link.configure(state='disabled' if busy or self.chapter == 2 else 'normal')
         self.story_cancel.configure(state='disabled' if busy else 'normal')
+        selected = any(self.loot_session.state.get(key) for key in ('enabled', 'armed', 'restoring'))
         for button in (self.loot_guaranteed_button, self.loot_all_button, self.loot_unique_button):
-            button.configure(state='normal' if self.current and not busy else 'disabled')
-        self.loot_cancel.configure(state='normal' if self.loot_session.state.get('armed') and not busy else 'disabled')
+            button.configure(state='normal' if (self.current or selected) and not busy else 'disabled')
+        self.loot_cancel.configure(state='normal' if selected and not busy else 'disabled')
 
     def refresh(self):
         self.generation += 1

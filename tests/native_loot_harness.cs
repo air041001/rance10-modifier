@@ -13,14 +13,21 @@ internal sealed class RuntimeProfile {
     internal string LootError,DropError;
     internal static string Hash(byte[] b) { using(var h=SHA256.Create())return BitConverter.ToString(h.ComputeHash(b)).Replace("-","").ToLowerInvariant(); }
 }
-internal sealed class FakeProcess { internal bool HasExited; internal int Id=42; }
-internal sealed class GlobalsPage { internal uint Context=5000,Owner; }
+internal sealed class FakeProcess {
+    internal int Id=Fake.Pid;
+    readonly long generation=Fake.Generation;
+    internal bool HasExited { get { return !Fake.Running || generation!=Fake.Generation; } }
+}
+internal sealed class GlobalsPage { internal uint Context=Fake.Context,Owner; }
 internal sealed class Located { internal GlobalsPage Globals; }
 internal static class RuntimeSettings { internal static string GameDirectory,ProfilePath; }
 internal static class Fake {
     internal static readonly byte[] Memory=new byte[512];
     internal static RuntimeProfile Profile;
-    internal static uint Owner=2,IP=100010;
+    internal static uint Owner=2,IP=100010,Base=100000,Context=5000;
+    internal static int Pid=42;
+    internal static long Generation=10;
+    internal static bool Running=true,Ready=true;
     internal static int Writes,FailAt;
     internal static bool Paused;
     internal static uint[] Callers=new uint[0];
@@ -28,6 +35,7 @@ internal static class Fake {
     internal static void Reset() {
         for(int i=0;i<Memory.Length;i++)Memory[i]=(byte)(i%127);
         Original=Memory.ToArray();Owner=2;IP=100010;Writes=FailAt=0;Callers=new uint[0];
+        Base=100000;Context=5000;Pid=42;Generation=10;Running=Ready=true;
         Profile=new RuntimeProfile { Loot=new LootProfile { Offset=64,Length=32,GuardStart=64,GuardEnd=96 },
                                     Drop=new LootProfile { Offset=160,Length=48,GuardStart=150,GuardEnd=220 } };
         foreach(var p in new[]{Profile.Loot,Profile.Drop})p.SpanHash=RuntimeProfile.Hash(Memory.Skip((int)p.Offset).Take(p.Length).ToArray());
@@ -36,24 +44,24 @@ internal static class Fake {
 internal sealed class Connection : IDisposable {
     internal FakeProcess Process=new FakeProcess();
     internal RuntimeProfile Profile { get { return Fake.Profile; } }
-    internal long Session=10;
+    internal long Session=Fake.Generation;
     internal IntPtr Handle=IntPtr.Zero;
     internal Dictionary<string,uint> Types=new Dictionary<string,uint>{{"Stack",123}};
-    internal Connection(bool write,bool food) {}
+    internal Connection(bool write,bool food) {if(!Fake.Running)throw new InvalidOperationException("No game running");}
     internal byte[] Read(uint address,int size) {
-        if(address==5140)return BitConverter.GetBytes((uint)100000).Concat(BitConverter.GetBytes((uint)100512)).ToArray();
-        if(address==5136)return BitConverter.GetBytes(Fake.IP);
-        if(address==5188)return BitConverter.GetBytes((uint)123).Concat(BitConverter.GetBytes(Fake.Callers.Length-1)).ToArray();
-        if(address==5196)return Fake.Callers.SelectMany(v=>BitConverter.GetBytes(v)).ToArray();
-        if(address>=100000 && address+(uint)size<=100512)return Fake.Memory.Skip((int)address-100000).Take(size).ToArray();
+        if(address==Fake.Context+140)return BitConverter.GetBytes(Fake.Base).Concat(BitConverter.GetBytes(Fake.Base+512)).ToArray();
+        if(address==Fake.Context+136)return BitConverter.GetBytes(Fake.IP);
+        if(address==Fake.Context+188)return BitConverter.GetBytes((uint)123).Concat(BitConverter.GetBytes(Fake.Callers.Length-1)).ToArray();
+        if(address==Fake.Context+196)return Fake.Callers.SelectMany(v=>BitConverter.GetBytes(v)).ToArray();
+        if(address>=Fake.Base && address+(uint)size<=Fake.Base+512)return Fake.Memory.Skip((int)(address-Fake.Base)).Take(size).ToArray();
         throw new Exception("Unexpected read");
     }
     public void Dispose() {}
 }
 internal static class Engine {
-    internal static GlobalsPage CheckGlobals(Connection c,uint owner){return new GlobalsPage{Owner=Fake.Owner};}
+    internal static GlobalsPage CheckGlobals(Connection c,uint owner){if(!Fake.Ready)throw new InvalidOperationException("Loading");return new GlobalsPage{Owner=Fake.Owner};}
     internal static bool SameGlobals(GlobalsPage a,GlobalsPage b){return a.Owner==b.Owner && a.Context==b.Context;}
-    internal static Located Locate(Connection c,bool food){return new Located{Globals=new GlobalsPage{Owner=Fake.Owner}};}
+    internal static Located Locate(Connection c,bool food){if(!Fake.Ready)throw new InvalidOperationException("Loading");return new Located{Globals=new GlobalsPage{Owner=Fake.Owner}};}
 }
 internal sealed class PausedGame : IDisposable {
     internal PausedGame(FakeProcess p){if(Fake.Paused)throw new Exception("Nested pause");Fake.Paused=true;}
@@ -64,7 +72,7 @@ internal static class Native {
         if(!Fake.Paused)throw new Exception("Unpaused write");
         Fake.Writes++;int count=(int)size.ToUInt64();bool success=Fake.Writes!=Fake.FailAt;
         if(!success){count/=2;Fake.FailAt=0;}
-        Array.Copy(data,0,Fake.Memory,(int)address.ToInt64()-100000,count);written=(UIntPtr)(uint)count;return success;
+        Array.Copy(data,0,Fake.Memory,(int)(address.ToInt64()-Fake.Base),count);written=(UIntPtr)(uint)count;return success;
     }
 }
 internal static class Harness {
@@ -85,6 +93,8 @@ internal static class Harness {
             Fake.Memory.Skip(160).Take(48).SequenceEqual(drop?Enumerable.Repeat((byte)231,48):Fake.Original.Skip(160).Take(48));
     }
     static bool Failed(string name,params object[] args) {try{Call(name,args);return false;}catch(InvalidOperationException){return true;}}
+    static Dictionary<string,object> State(){return (Dictionary<string,object>)Call("State",true,false,"");}
+    static void RestoreMemory(){Array.Copy(Fake.Original,Fake.Memory,Fake.Memory.Length);}
     static int Main() {
         RuntimeSettings.ProfilePath=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"profile.json");
         File.WriteAllText(RuntimeSettings.ProfilePath,"{}");
@@ -129,6 +139,43 @@ internal static class Harness {
         Fake.Reset();Call("Arm",Command(false,false,true));Call("Arm",Command(true,true,false));Assert(Patched(true,false),"toggle combinations");
         Call("Restore");Assert(SameOriginal(),"final restore");
         Console.WriteLine("PASS toggling between guaranteed-only and pool-only");
+        for(int bits=1;bits<8;bits++) {
+            Fake.Reset();bool all=(bits&1)!=0,unique=(bits&2)!=0,drop=(bits&4)!=0;
+            Call("Enable",Command(all,unique,drop));int initial=Fake.Writes;
+            for(int reload=0;reload<6;reload++) {
+                Fake.Owner++;Fake.Context+=1000;
+                Assert((bool)Call("Maintain") && Patched(all||unique,drop),"reload preserves rules");
+                Assert(Fake.Writes==initial,"unchanged code should not be restored/repatched");
+            }
+            RestoreMemory();Call("Maintain");Assert(Patched(all||unique,drop),"same-owner code reset");
+            Assert((bool)State()["enabled"] && (bool)State()["armed"],"selection survives refresh");
+            Call("Cancel");Assert(SameOriginal() && !(bool)State()["enabled"],"cancel selection");
+        }
+        Console.WriteLine("PASS reload, retry and code reset preserve all seven selections");
+        Fake.Reset();Call("Enable",Command(true,true,true));Fake.Ready=false;Call("Tick");
+        Assert((bool)State()["enabled"] && (bool)State()["waiting"] && !(bool)State()["armed"],"loading keeps intent");
+        Fake.Ready=true;Fake.Owner++;Call("Tick");Assert((bool)State()["armed"] && Patched(true,true),"resume after loading");
+        RestoreMemory();Fake.IP=Fake.Base+180;Call("Tick");Assert((bool)State()["waiting"] && SameOriginal(),"retry guard waits");
+        Fake.IP=Fake.Base+10;Call("Tick");Assert((bool)State()["armed"] && Patched(true,true),"guard later reapplies");
+        Call("Cancel");
+        Console.WriteLine("PASS loading and active-function waits keep choices and later resume");
+        Fake.Reset();Call("Enable",Command(true,true,true));Fake.Base+=10000;Fake.Context+=1000;Fake.Owner++;Fake.IP=Fake.Base+10;RestoreMemory();
+        Call("Maintain");Assert(Patched(true,true) && (bool)State()["armed"],"new VM allocation");Call("Cancel");
+        Console.WriteLine("PASS relocated VM is reattached without writing stale addresses");
+        Fake.Reset();Call("Enable",Command(true,true,true));Fake.Running=false;Call("Tick");
+        Assert((bool)State()["enabled"] && (bool)State()["waiting"],"game closed keeps intent");
+        Fake.Running=true;Fake.Pid++;Fake.Generation++;Fake.Owner++;RestoreMemory();Call("Tick");
+        Assert(Patched(true,true) && (bool)State()["armed"],"new game session");Call("Cancel");
+        Console.WriteLine("PASS game restart refreshes process/session identity");
+        Fake.Reset();Call("Enable",Command(true,true,true));Fake.Ready=false;Call("Tick");
+        Assert(Failed("Cancel"),"cancel during transition may defer restore");Assert(!(bool)State()["enabled"],"cancel clears intent first");
+        Fake.Ready=true;Fake.Owner++;RestoreMemory();Fake.Writes=0;Call("Tick");
+        Assert(SameOriginal() && Fake.Writes==0 && !(bool)State()["armed"],"cancelled choices stay cancelled");
+        Console.WriteLine("PASS cancelling during reload prevents automatic re-enable");
+        Fake.Reset();Call("Enable",Command(true,true,true));Fake.Memory[160]=240;Fake.Writes=0;Call("Tick");
+        Assert((bool)State()["waiting"] && Fake.Writes==0,"auto resume preserves foreign code");
+        Fake.Memory[160]=231;Call("Cancel");
+        Console.WriteLine("PASS auto resume never overwrites foreign changes");
         return 0;
     }
 }

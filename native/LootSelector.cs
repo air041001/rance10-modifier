@@ -17,7 +17,11 @@ internal static class LootSelector {
         internal byte[] Original, Patch;
     }
     static readonly List<Entry> entries=new List<Entry>();
-    static bool allCards, unique, guaranteed, restoring;
+    static bool allCards, unique, guaranteed, restoring, armed;
+    // These rules contain script IDs, not handles into a particular save.
+    // Keep the user's successful selection while the VM reloads its objects.
+    static Dictionary<string,object> requested;
+    static string notice="";
     static volatile bool inputClosed;
     static long revision;
 
@@ -36,7 +40,7 @@ internal static class LootSelector {
     }
     static void Forget() {
         if(connection!=null)connection.Dispose();
-        connection=null; globals=null; entries.Clear(); restoring=allCards=unique=guaranteed=false;
+        connection=null; globals=null; entries.Clear(); restoring=allCards=unique=guaranteed=armed=false;
     }
     static bool Guarded(uint value) {
         return entries.Any(e=>(value>=e.Layout.GuardStart && value<e.Layout.GuardEnd) ||
@@ -90,7 +94,7 @@ internal static class LootSelector {
     }
     static void Restore() {
         if(connection==null)return;
-        restoring=true;
+        restoring=true;armed=false;
         if(connection.Process.HasExited){Forget();return;}
         GlobalsPage page=globals;
         if(!Current()) {
@@ -133,6 +137,7 @@ internal static class LootSelector {
                 entries.Add(new Entry { Layout=p,Original=original,Patch=patch });
             }
             Write(globals,entries.Select(e=>e.Original).ToArray(),entries.Select(e=>e.Patch).ToArray());
+            armed=true;
         } catch {
             bool original=entries.All(e=> {
                 byte[] now=connection.Read(codeBase+e.Layout.Offset,e.Layout.Length);
@@ -142,9 +147,67 @@ internal static class LootSelector {
             throw;
         }
     }
+    static void Enable(Dictionary<string,object> command) {
+        Arm(command);
+        requested=new Dictionary<string,object>(command);notice="";
+    }
+    static void Cancel() {
+        // Clear intent first so a deferred restore can never re-enable it.
+        requested=null;notice="";Restore();
+    }
+    static bool Maintain() {
+        if(requested==null)return false;
+        if(connection!=null && connection.Process.HasExited)Forget();
+        if(connection!=null) {
+            GlobalsPage page=Current()?globals:Engine.Locate(connection,false).Globals;
+            if(CodeBase(connection,page)==codeBase) {
+                byte[][] now=entries.Select(e=>connection.Read(codeBase+e.Layout.Offset,e.Layout.Length)).ToArray();
+                if(entries.Select((e,i)=>now[i]==null).Any(v=>v))
+                    throw new InvalidOperationException("暂时无法读取宝箱规则。");
+                if(entries.Select((e,i)=>!now[i].SequenceEqual(e.Patch) && !now[i].SequenceEqual(e.Original)).Any(v=>v))
+                    throw new InvalidOperationException("宝箱代码被其他程序改变，没有覆盖。");
+                bool changed=!armed || !Engine.SameGlobals(globals,page) || restoring;
+                if(entries.Select((e,i)=>!now[i].SequenceEqual(e.Patch)).Any(v=>v)) {
+                    // Reload/retry may reset either span. Reapply to the newly
+                    // validated page, with the same guards and atomic rollback.
+                    Write(page,now,entries.Select(e=>e.Patch).ToArray());changed=true;
+                }
+                globals=page;restoring=false;armed=true;return changed;
+            }
+            // This VM no longer executes the old code allocation. Do not write
+            // to its stale address; locate and verify the replacement VM below.
+            Forget();
+        }
+        Dictionary<string,object> command=new Dictionary<string,object>(requested);
+        using(var c=new Connection(false,true)) {
+            var page=Engine.Locate(c,false).Globals;
+            command["pid"]=c.Process.Id;command["session"]=c.Session;command["global_owner"]=page.Owner;
+        }
+        Arm(command);return true;
+    }
+    static void Tick() {
+        try {
+            if(requested!=null) {
+                if(!Maintain())return;
+                notice="宝箱选项已自动应用到当前进度；读档和重新战斗后会继续保持。";
+                Emit(State(true,false,notice));
+            } else if(restoring && connection!=null) {
+                Restore();notice="已恢复游戏原来的宝箱规则。";
+                Emit(State(true,false,notice));
+            }
+        } catch(Exception ex) {
+            armed=false;
+            string message=(requested!=null?"宝箱选项已保留，等待自动应用：":"正在恢复宝箱规则：")+ex.Message;
+            if(message!=notice){notice=message;Emit(State(false,false,message));}
+        }
+    }
     static Dictionary<string,object> State(bool success,bool reply,string message) {
-        return new Dictionary<string,object> { {"success",success},{"reply",reply},{"armed",connection!=null},
-            {"all_cards",allCards},{"unique",unique},{"guaranteed",guaranteed},{"restoring",restoring},{"message",message} };
+        return new Dictionary<string,object> { {"success",success},{"reply",reply},{"armed",armed && !restoring},
+            {"enabled",requested!=null},{"waiting",requested!=null && (!armed || restoring)},
+            {"all_cards",requested!=null?Flag(requested,"all_cards"):allCards},
+            {"unique",requested!=null?Flag(requested,"unique"):unique},
+            {"guaranteed",requested!=null?Flag(requested,"guaranteed"):guaranteed},
+            {"restoring",restoring},{"message",message} };
     }
     static Dictionary<string,object> Probe(Dictionary<string,object> command) {
         using(var c=new Connection(false,true)) {
@@ -194,24 +257,23 @@ internal static class LootSelector {
                     Dictionary<string,object> result;
                     try {
                         string action=(string)command["action"];
-                        if(action=="arm") {Arm(command);result=State(true,true,guaranteed?"宝箱规则已开启：后续可掉落的胜利必出宝箱；卡池规则在生成候选时生效。":"宝箱规则已开启，下次生成随机候选时生效。");}
-                        else if(action=="cancel") {Restore();result=State(true,true,"已恢复游戏原来的宝箱规则。");}
+                        if(action=="arm") {Enable(command);result=State(true,true,"宝箱规则已开启，读档或重新战斗后会自动保持；手动取消或关闭修改器时结束。");}
+                        else if(action=="cancel") {Cancel();result=State(true,true,"已恢复游戏原来的宝箱规则。");}
                         else if(action=="probe") result=Probe(command);
                         else throw new InvalidOperationException("未知宝箱操作。");
                     } catch(Exception ex){result=State(false,true,ex.Message);}
                     object request; if(command.TryGetValue("request_id",out request))result["request_id"]=request;
                     Emit(result);
                 }
-                if(connection!=null && DateTime.UtcNow>=retry) {
-                    try {
-                        if(restoring || !Current()) {Restore();Emit(State(true,false,"读档或进度切换，宝箱规则已取消；需要时重新开启。"));}
-                    } catch(Exception ex) {restoring=true;Emit(State(false,false,"正在恢复宝箱规则："+ex.Message));retry=DateTime.UtcNow.AddSeconds(3);}
+                if((connection!=null || requested!=null) && DateTime.UtcNow>=retry) {
+                    Tick();retry=DateTime.UtcNow.AddMilliseconds(500);
                 }
                 Thread.Sleep(100);
             }
             return 0;
         } catch(Exception ex){Emit(State(false,true,ex.Message));return 1;}
         finally {
+            requested=null;
             while(connection!=null){try{Restore();}catch{Thread.Sleep(1000);}}
             if(parent!=null)parent.Dispose();
         }

@@ -5,6 +5,7 @@ import queue
 import sys
 import threading
 import traceback
+import webbrowser
 from pathlib import Path
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -22,6 +23,7 @@ from ui_theme import BG, SURFACE, TEXT, MUTED, LINE, NAV, FONT, GREEN, RED, Page
 
 
 class App(tk.Tk):
+    instructions_url = 'https://github.com/air041001/rance10-modifier#readme'
     def __init__(self, auto_connect=True):
         app_paths.initialize()
         super().__init__()
@@ -179,14 +181,18 @@ class App(tk.Tk):
         hint.bind('<Configure>', lambda e: hint.configure(wraplength=max(1, e.width)))
         bar = ttk.Frame(self.records)
         bar.pack(fill='x', pady=(0, 14))
+        self.instructions_button = ttk.Button(bar, text='在线使用说明', command=self.open_instructions)
         flow_buttons(bar, [ttk.Button(bar, text='打开原档备份', command=self.open_backup),
-                          ttk.Button(bar, text='打开使用说明', command=lambda: os.startfile(str(app_paths.RESOURCE_DIR / '使用说明.txt'))),
+                          self.instructions_button,
                           ttk.Button(bar, text='刷新记录', command=self.refresh_history)])
         self.history = tk.Text(self.records, bg=SURFACE, fg=TEXT, relief='flat', wrap='word', padx=20, pady=18,
                                highlightbackground=LINE, highlightthickness=1,
                                spacing1=5, spacing3=5, font=(FONT, 11), state='disabled')
         self.history.pack(fill='both', expand=True)
         self.refresh_history()
+
+    def open_instructions(self):
+        webbrowser.open(self.instructions_url)
 
     def refresh_history(self):
         if not hasattr(self, 'history'):

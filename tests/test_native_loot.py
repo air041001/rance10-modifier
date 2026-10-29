@@ -20,3 +20,5 @@ class NativeLootTests(unittest.TestCase):
             self.assertEqual(result.returncode,0,result.stdout+result.stderr)
             self.assertIn(b'PASS second-span partial write restores both originals',result.stdout)
             self.assertIn(b'PASS changed save globals restore both spans',result.stdout)
+            self.assertIn(b'PASS reload, retry and code reset preserve all seven selections',result.stdout)
+            self.assertIn(b'PASS cancelling during reload prevents automatic re-enable',result.stdout)

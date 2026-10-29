@@ -29,15 +29,18 @@ def main():
     entries = zipfile.ZipFile(packages[0]).namelist()
     for name in entries:
         path = Path(name)
+        if len(path.parts)>1 and path.parts[1] not in {'_internal', '兰斯10修改器.exe'}:
+            raise ValueError('Unexpected top-level application file: ' + name)
+        if path.name in {'README.md', 'CHANGELOG.md', '使用说明.txt'}:
+            raise ValueError('User documentation in application package: ' + name)
         if len(path.parts)>1 and path.parts[1] in {'docs', 'app', 'native', 'scripts', 'tests'}:
             raise ValueError('Development files in application package: ' + name)
         if path.suffix.lower() in forbidden or path.name in prohibited:
             raise ValueError('Game or personal data in release: ' + name)
         if path.suffix.lower() in ['.png', '.jpg', '.webp', '.ajp', '.dcf']:
             raise ValueError('Unexpected image resource: ' + name)
-    readme = zipfile.ZipFile(packages[0]).read('Rance10Modifier/README.md').decode('utf-8')
-    if '\n## 开发\n' in readme:
-        raise ValueError('Development instructions in application README.')
+    if 'Rance10Modifier/_internal/licenses/Rance10Modifier-LICENSE.txt' not in entries:
+        raise ValueError('Missing application license.')
     print('Source:', len(files), 'files. Release:', len(entries), 'files.')
     print('No game data, card images, personal saves, settings, or logs.')
 
