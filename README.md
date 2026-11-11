@@ -1,5 +1,9 @@
 # 兰斯10修改器
 
+[![Downloads](https://img.shields.io/github/downloads/air041001/rance10-modifier/total?label=Downloads&color=blue)](https://github.com/air041001/rance10-modifier/releases)
+[![Stars](https://img.shields.io/github/stars/air041001/rance10-modifier?label=Stars&color=yellow)](https://github.com/air041001/rance10-modifier/stargazers)
+[![Latest Release](https://img.shields.io/github/v/release/air041001/rance10-modifier?label=Latest%20Release)](https://github.com/air041001/rance10-modifier/releases/latest)
+
 一个 Windows 桌面工具，让你少刷卡、少刷餐券，按自己的节奏游玩《兰斯10》。
 
 支持宝箱必掉落、全掉落与不重复、游玩中补餐券、金块与友情，增减四国战果、增加部队点数、指定餐券故事人物，以及带卡面预览的卡牌添加、删除和人物培养。
